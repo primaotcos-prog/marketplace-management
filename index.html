@@ -12,17 +12,10 @@
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">M</div>
-          <div>
-            <strong>Marketplace</strong>
-            <span>Management</span>
-          </div>
+          <div><strong>Marketplace</strong><span>Management</span></div>
         </div>
-
         <div class="sidebar-label">MARKETPLACE</div>
-        <button class="marketplace active" data-page="dashboard">
-          <span>🎮</span><span>GameBoost</span><span class="chevron">›</span>
-        </button>
-
+        <button class="marketplace active" data-page="dashboard"><span>🎮</span><span>GameBoost</span><span class="chevron">›</span></button>
         <nav class="nav-group">
           <button class="nav-item active" data-page="dashboard">Dashboard</button>
           <button class="nav-item" data-page="products">Products</button>
@@ -32,28 +25,18 @@
           <button class="nav-item" data-page="pricing">Pricing</button>
           <button class="nav-item" data-page="delivery">Delivery</button>
         </nav>
-
         <div class="sidebar-spacer"></div>
         <button class="nav-item" data-page="settings">Settings</button>
         <div class="future-marketplace">+ Add marketplace later</div>
       </aside>
-
       <main class="main">
         <header class="topbar">
-          <div>
-            <div class="eyebrow">GAMEBOOST</div>
-            <h1 id="page-title">Dashboard</h1>
-          </div>
-          <div class="topbar-actions">
-            <span class="connection-dot"></span>
-            <span>Connection ready</span>
-          </div>
+          <div><div class="eyebrow">GAMEBOOST</div><h1 id="page-title">Dashboard</h1></div>
+          <div class="topbar-actions"><span id="connection-dot" class="connection-dot"></span><span id="connection-text">Demo mode</span></div>
         </header>
-
         <section id="page-content" class="content"></section>
       </main>
     </div>
-
-    <script src="./src/app.js"></script>
+    <script type="module" src="./src/app.js"></script>
   </body>
 </html>
