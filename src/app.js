@@ -11,7 +11,7 @@ const loginMessage=document.getElementById('login-message');
 const logout=document.getElementById('logout');
 let currentListings=[];
 
-const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const esc=v=>String(v??'').replace(/[&<>'\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[c]));
 const fmtDate=v=>{if(!v)return '-';const n=Number(v);const d=new Date(n<100000000000?n*1000:n);return Number.isNaN(d.getTime())?esc(v):d.toLocaleString()};
 const api=async body=>{const {data,error}=await supabase.functions.invoke('gameboost-api',{body});if(error)throw error;if(!data?.ok)throw new Error(data?.error||'GameBoost API error');return data};
 
@@ -36,9 +36,106 @@ async function toggleOffer(index){const x=currentListings[index];if(!x)return;co
 
 async function refreshOffer(index){const x=currentListings[index];if(!x)return;try{await api({operation:'get_offer',offer_id:x.external_offer_id});await listings();alert('Data offer berhasil diperbarui dari GameBoost.')}catch(e){alert(`Refresh gagal: ${e.message}`)}}
 
-function productForm(){const box=document.getElementById('product-form');if(!box)return;box.innerHTML=`<div class="panel" style="margin-top:12px"><div class="panel-head"><strong>Tambah produk / listing GameBoost</strong><button class="action" data-close-form>Tutup</button></div><form id="create-product-form"><div class="form-grid"><label>Game ID<input name="game_id" type="number" required placeholder="contoh: 95"></label><label>Judul<input name="title" required placeholder="Nama produk"></label><label>Harga EUR<input name="price" type="number" min="0.01" step="0.01" required placeholder="2.20"></label><label>Stock<input name="stock" type="number" min="0" step="1" value="1" required></label><label>Min quantity<input name="min_quantity" type="number" min="1" step="1" value="1"></label><label>Delivery method<select name="delivery_method"><option value="trade">trade</option><option value="username">username</option><option value="gift">gift</option><option value="mail">mail</option><option value="redeem">redeem</option><option value="none">none</option></select></label><label style="grid-column:1/-1">Description<textarea name="description" rows="4" placeholder="Deskripsi produk"></textarea></label><label style="grid-column:1/-1">Parameters JSON<textarea name="parameters" rows="3" placeholder='{"item_type":"Brainrot"}'></textarea></label><label style="grid-column:1/-1">Image URLs (satu per baris)<textarea name="image_urls" rows="3" placeholder="https://..."></textarea></label></div><button class="action" type="submit" style="margin-top:12px">Buat Produk</button><div id="create-product-message" class="empty" style="display:none"></div></form></div>`;box.querySelector('[data-close-form]').addEventListener('click',()=>box.innerHTML='');box.querySelector('#create-product-form').addEventListener('submit',createProduct)}
+let gameSearchTimer=null;
+let selectedGame=null;
+let selectedTemplate=null;
 
-async function createProduct(e){e.preventDefault();const form=e.currentTarget;const msg=form.querySelector('#create-product-message');const fd=new FormData(form);let parameters=null;const raw=String(fd.get('parameters')||'').trim();if(raw){try{parameters=JSON.parse(raw)}catch{msg.style.display='block';msg.textContent='Parameters harus JSON yang valid.';return}}const image_urls=String(fd.get('image_urls')||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const payload={game_id:Number(fd.get('game_id')),title:String(fd.get('title')).trim(),description:String(fd.get('description')||'').trim()||null,price:Number(fd.get('price')),stock:Number(fd.get('stock')),min_quantity:Number(fd.get('min_quantity')||1),delivery_method:String(fd.get('delivery_method')||'trade'),parameters,image_urls};const btn=form.querySelector('button[type=submit]');btn.disabled=true;btn.textContent='Membuat...';try{await api({operation:'create_offer',...payload});msg.style.display='block';msg.textContent='Produk berhasil dibuat di GameBoost.';await render('listings')}catch(err){msg.style.display='block';msg.textContent=`Gagal membuat produk: ${err.message}`}finally{btn.disabled=false;btn.textContent='Buat Produk'}}
+function templatePayload(template){
+  if(template==null)return null;
+  if(Array.isArray(template))return template;
+  if(typeof template!=='object')return template;
+  return template.template??template.data??template.schema??template;
+}
+
+function templateFields(template){
+  const t=templatePayload(template);
+  if(!t||typeof t!=='object'||Array.isArray(t))return [];
+  const source=t.fields||t.parameters||t.item_fields||t.properties;
+  if(!source)return [];
+  if(Array.isArray(source))return source.map((x,i)=>typeof x==='string'?{name:x,label:x,type:'text'}:{...x,name:x.name||x.key||x.id||`field_${i+1}`,label:x.label||x.title||x.name||x.key||`Field ${i+1}`});
+  return Object.entries(source).map(([name,x])=>typeof x==='string'?{name,label:name,type:'text'}:{...(x||{}),name,label:x?.label||x?.title||name});
+}
+
+function renderTemplateFields(template){
+  const box=document.getElementById('template-fields');
+  if(!box)return;
+  const fields=templateFields(template);
+  if(!fields.length){box.innerHTML='<div class="empty">Template tidak menyediakan field terstruktur. Gunakan Parameters JSON / Item data JSON di bawah.</div>';return}
+  box.innerHTML=fields.map((f,i)=>{
+    const type=String(f.type||f.input_type||'text').toLowerCase();
+    const req=f.required?' required':'';
+    const opts=Array.isArray(f.options)?f.options:Array.isArray(f.enum)?f.enum:[];
+    let input;
+    if(opts.length)input=`<select name="template_${i}" data-template-name="${esc(f.name)}"${req}><option value="">Pilih...</option>${opts.map(o=>{const v=typeof o==='object'?(o.value??o.id??o.name):o;const l=typeof o==='object'?(o.label??o.name??o.value):o;return `<option value="${esc(v)}">${esc(l)}</option>`}).join('')}</select>`;
+    else if(type==='textarea'||type==='longtext')input=`<textarea name="template_${i}" data-template-name="${esc(f.name)}" rows="3"${req} placeholder="${esc(f.description||'')}"></textarea>`;
+    else input=`<input name="template_${i}" data-template-name="${esc(f.name)}" type="${['number','integer'].includes(type)?'number':'text'}"${req} placeholder="${esc(f.description||f.placeholder||'')}">`;
+    return `<label>${esc(f.label||f.name)}${f.required?' *':''}${input}</label>`;
+  }).join('');
+}
+
+async function searchGames(search=''){
+  const data=await api({operation:'list_games',search,sort:'name'});
+  return Array.isArray(data.games)?data.games:[];
+}
+
+async function loadGameTemplate(game){
+  selectedGame=game;selectedTemplate=null;
+  const status=document.getElementById('game-template-status');
+  const box=document.getElementById('template-preview');
+  const fields=document.getElementById('template-fields');
+  if(status)status.textContent=`Memuat template ${game.name}...`;
+  if(box)box.textContent='Loading...';
+  if(fields)fields.innerHTML='';
+  try{
+    const [detail,template]=await Promise.all([api({operation:'get_game',slug:game.slug}),api({operation:'get_template',slug:game.slug})]);
+    selectedGame=detail.game||game;
+    selectedTemplate=template.template;
+    if(status)status.textContent=`Template aktif: ${selectedGame.name||game.name}`;
+    if(box)box.textContent=JSON.stringify(templatePayload(selectedTemplate),null,2);
+    renderTemplateFields(selectedTemplate);
+    const gameId=document.querySelector('#create-product-form [name="game_id"]');
+    const gameSlug=document.querySelector('#create-product-form [name="game"]');
+    if(gameId)gameId.value=selectedGame.id??game.id??'';
+    if(gameSlug)gameSlug.value=selectedGame.slug||game.slug||'';
+  }catch(e){
+    if(status)status.textContent=`Template gagal dimuat: ${e.message}`;
+    if(box)box.textContent='Template tidak dapat dimuat.';
+  }
+}
+
+function gamePicker(){
+  const input=document.getElementById('game-search-input');
+  const results=document.getElementById('game-results');
+  if(!input||!results)return;
+  const run=async()=>{
+    const q=input.value.trim();
+    results.innerHTML='<div class="empty">Mencari game...</div>';
+    try{
+      const games=await searchGames(q);
+      if(!games.length){results.innerHTML='<div class="empty">Game tidak ditemukan.</div>';return}
+      results.innerHTML=games.slice(0,30).map((g,i)=>`<button type="button" class="action" data-game-index="${i}" style="width:100%;text-align:left;margin-bottom:6px"><strong>${esc(g.name)}</strong><span style="opacity:.7;margin-left:8px">${esc(g.slug||'')}${g.acronym?` · ${esc(g.acronym)}`:''}</span></button>`).join('');
+      results.querySelectorAll('[data-game-index]').forEach((b,i)=>b.addEventListener('click',()=>{
+        const game=games[i];
+        input.value=game.name;
+        results.innerHTML='';
+        document.getElementById('selected-game-label').textContent=`${game.name} · ID ${game.id} · ${game.slug}`;
+        loadGameTemplate(game);
+      }));
+    }catch(e){results.innerHTML=`<div class="empty">Gagal mengambil game: ${esc(e.message)}</div>`}
+  };
+  input.addEventListener('input',()=>{clearTimeout(gameSearchTimer);gameSearchTimer=setTimeout(run,250)});
+  input.addEventListener('focus',()=>{if(!input.value.trim())run()});
+}
+
+function collectTemplateData(form){
+  const out={};
+  form.querySelectorAll('[data-template-name]').forEach(el=>{const v=String(el.value??'').trim();if(v)out[el.dataset.templateName]=v});
+  return out;
+}
+
+function productForm(){const box=document.getElementById('product-form');if(!box)return;selectedGame=null;selectedTemplate=null;box.innerHTML=`<div class="panel" style="margin-top:12px"><div class="panel-head"><strong>Tambah produk / listing GameBoost</strong><button class="action" data-close-form>Tutup</button></div><form id="create-product-form"><input type="hidden" name="game_id"><input type="hidden" name="game"><div class="form-grid"><label style="grid-column:1/-1">Cari Game<input id="game-search-input" autocomplete="off" placeholder="Ketik nama game, slug, acronym, atau ID..." required><div id="game-results" style="margin-top:8px"></div><div id="selected-game-label" class="status" style="margin-top:8px">Belum memilih game</div></label><label style="grid-column:1/-1"><span>Template GameBoost</span><div id="game-template-status" class="status" style="margin-top:6px">Pilih game untuk memuat template.</div><pre id="template-preview" style="max-height:180px;overflow:auto;white-space:pre-wrap;margin:8px 0 0">-</pre></label><div id="template-fields" class="form-grid" style="grid-column:1/-1"></div><label>Judul<input name="title" required placeholder="Nama produk"></label><label>Harga EUR<input name="price" type="number" min="0.01" step="0.01" required placeholder="2.20"></label><label>Stock<input name="stock" type="number" min="0" step="1" value="1" required></label><label>Min quantity<input name="min_quantity" type="number" min="1" step="1" value="1"></label><label>Delivery method<select name="delivery_method"><option value="trade">trade</option><option value="username">username</option><option value="gift">gift</option><option value="mail">mail</option><option value="redeem">redeem</option><option value="none">none</option></select></label><label style="grid-column:1/-1">Description<textarea name="description" rows="4" placeholder="Deskripsi produk"></textarea></label><label style="grid-column:1/-1">Parameters JSON<textarea name="parameters" rows="3" placeholder='{"item_type":"Brainrot"}'></textarea></label><label style="grid-column:1/-1">Item data JSON<textarea name="item_data" rows="3" placeholder='{}'></textarea></label><label style="grid-column:1/-1">Image URLs (satu per baris)<textarea name="image_urls" rows="3" placeholder="https://..."></textarea></label></div><button class="action" type="submit" style="margin-top:12px">Buat Produk</button><div id="create-product-message" class="empty" style="display:none"></div></form></div>`;box.querySelector('[data-close-form]').addEventListener('click',()=>box.innerHTML='');gamePicker();box.querySelector('#create-product-form').addEventListener('submit',createProduct)}
+
+async function createProduct(e){e.preventDefault();const form=e.currentTarget;const msg=form.querySelector('#create-product-message');const fd=new FormData(form);if(!selectedGame){msg.style.display='block';msg.textContent='Pilih game terlebih dahulu.';return}let parameters=null,item_data=null;for(const [key,target] of [['parameters','parameters'],['item_data','item_data']]){const raw=String(fd.get(key)||'').trim();if(raw){try{const parsed=JSON.parse(raw);if(target==='parameters')parameters=parsed;else item_data=parsed}catch{msg.style.display='block';msg.textContent=`${key} harus JSON yang valid.`;return}}}const templateData=collectTemplateData(form);const image_urls=String(fd.get('image_urls')||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const payload={game_id:Number(selectedGame.id),game:String(selectedGame.slug||''),title:String(fd.get('title')).trim(),description:String(fd.get('description')||'').trim()||null,price:Number(fd.get('price')),stock:Number(fd.get('stock')),min_quantity:Number(fd.get('min_quantity')||1),delivery_method:String(fd.get('delivery_method')||'trade'),parameters,item_data,template_data:templateData,image_urls};const btn=form.querySelector('button[type=submit]');btn.disabled=true;btn.textContent='Membuat...';try{await api({operation:'create_offer',...payload});msg.style.display='block';msg.textContent='Produk berhasil dibuat di GameBoost.';await render('listings')}catch(err){msg.style.display='block';msg.textContent=`Gagal membuat produk: ${err.message}`}finally{btn.disabled=false;btn.textContent='Buat Produk'}}
 
 function detail(i){const x=currentListings[i];if(!x)return;const m=x.metadata||{};const game=m.game||{};const pt=m.parameters||{};const dt=m.delivery_time||{};const price=m.price_eur||{};const img=(m.image_urls||[])[0];const box=document.getElementById('listing-detail');const on=statusIsOn(x);box.innerHTML=`<div class="panel" style="margin-top:12px"><div class="panel-head"><strong>Offer detail</strong><div style="display:flex;gap:8px"><button class="action" data-toggle-detail>${on?'OFF':'ON'}</button><button class="action" data-refresh-detail>Refresh</button><button class="action" data-close-detail>Close</button></div></div>${img?`<img src="${esc(img)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:10px;margin-bottom:12px">`:''}<div class="status-row"><span>Title</span><strong>${esc(x.title)}</strong></div><div class="status-row"><span>Offer ID</span><span>${esc(x.external_offer_id)}</span></div><div class="status-row"><span>Game</span><span>${esc(game.name||'-')} (${esc(game.slug||'-')})</span></div><div class="status-row"><span>Game ID</span><span>${esc(game.id||'-')}</span></div><div class="status-row"><span>Price</span><span>${esc(price.format||x.price+' EUR')} · USD ${esc(m.price_usd?.format||'-')}</span></div><div class="status-row"><span>Stock</span><span>${esc(m.stock??x.stock)} · Min ${esc(m.min_quantity??1)}</span></div><div class="status-row"><span>GameBoost status</span><span>${esc(m.status||x.status)}</span></div><div class="status-row"><span>Delivery</span><span>${esc(dt.format_long||dt.format||'-')} · ${esc(m.delivery_method||'-')}</span></div><div class="status-row"><span>Parameters</span><span>${esc(Object.entries(pt).map(([k,v])=>`${k}: ${v}`).join(' · ')||'-')}</span></div><div class="status-row"><span>Views</span><span>${esc(m.views??0)}</span></div><div class="status-row"><span>Updated</span><span>${fmtDate(m.updated_at)}</span></div><div class="status-row"><span>External ID</span><span>${esc(m.external_id||'-')}</span></div><div style="margin-top:12px"><strong>Description</strong><div class="empty" style="white-space:pre-wrap;text-align:left;margin-top:8px">${esc(m.description||'-')}</div></div></div>`;box.querySelector('[data-close-detail]').addEventListener('click',()=>box.innerHTML='');box.querySelector('[data-toggle-detail]').addEventListener('click',()=>toggleOffer(i));box.querySelector('[data-refresh-detail]').addEventListener('click',()=>refreshOffer(i))}
 
