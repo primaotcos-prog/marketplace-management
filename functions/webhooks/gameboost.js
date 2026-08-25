@@ -115,7 +115,48 @@ async function findAccount(env) {
   return rows?.[0] || null;
 }
 
-export async function onRequestGet({ env }) {
+// TEMPORARY WEBHOOK TEST MODE. Remove this block after the test is complete.
+const TEMP_TEST_TOKEN = "2E9DvKirr_aLZ66-20Ict5uCZoub6LZA";
+async function runTemporaryWebhookTest(env) {
+  const secret = text(env.GAMEBOOST_WEBHOOK_SECRET);
+  if (!secret) return json({ ok: false, error: "GAMEBOOST_WEBHOOK_SECRET belum dikonfigurasi." }, 503);
+
+  const testOrderId = `WEBHOOK_TEST_${Date.now()}`;
+  const envelope = {
+    event: "item.order.purchased",
+    payload: {
+      id: testOrderId,
+      item_offer_id: "WEBHOOK_TEST_OFFER",
+      title: "Temporary Webhook Test",
+      quantity: 1,
+      status: "pending",
+      price_eur: "0.01",
+      buyer: { username: "webhook-test" },
+      created_at: new Date().toISOString(),
+    },
+  };
+  const rawBody = JSON.stringify(envelope);
+  const headers = new Headers({
+    "content-type": "application/json",
+    "x-gameboost-event-id": testOrderId,
+    "x-gameboost-topic": "item.order.purchased",
+    "x-gameboost-signature": await signature(secret, rawBody),
+  });
+  const response = await onRequestPost({
+    request: new Request("https://temporary-test.local/webhooks/gameboost", { method: "POST", headers, body: rawBody }),
+    env,
+  });
+  const result = await response.json();
+  return json({ ok: response.ok, temporary_test: true, test_order_id: testOrderId, webhook_result: result }, response.status);
+}
+
+export async function onRequestGet({ request, env }) {
+  const url = new URL(request.url);
+  if (url.pathname === "/webhooks/gameboost" && url.searchParams.get("test") === "1") {
+    if (url.searchParams.get("token") !== TEMP_TEST_TOKEN) return json({ ok: false, error: "Invalid test token." }, 403);
+    return runTemporaryWebhookTest(env);
+  }
+
   return json({
     ok: true,
     service: "gameboost-webhook",
