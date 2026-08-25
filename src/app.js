@@ -1,84 +1,9 @@
-import { supabase, isSupabaseConfigured } from './supabase.js';
-
-const content = document.getElementById('page-content');
-const title = document.getElementById('page-title');
-const connectionText = document.getElementById('connection-text');
-const connectionDot = document.getElementById('connection-dot');
-
-const pages = {
-  dashboard: {
-    title: 'Dashboard',
-    html: `
-      <div class="hero"><h2>GameBoost control center</h2><p>Central management for products, listings, orders, stock and automation.</p></div>
-      <div class="cards">
-        <div class="card"><div class="card-label">Products</div><div class="card-value" id="products-count">—</div><div class="card-note">Supabase</div></div>
-        <div class="card"><div class="card-label">Listings</div><div class="card-value" id="listings-count">—</div><div class="card-note">GameBoost</div></div>
-        <div class="card"><div class="card-label">Orders</div><div class="card-value" id="orders-count">—</div><div class="card-note">All statuses</div></div>
-        <div class="card"><div class="card-label">Stock</div><div class="card-value" id="stock-count">—</div><div class="card-note">Available units</div></div>
-      </div>
-      <div class="grid">
-        <div class="panel"><div class="panel-head"><strong>Recent orders</strong><span class="card-label">V1</span></div><div id="recent-orders" class="empty">Loading...</div></div>
-        <div class="panel"><div class="panel-head"><strong>Integration</strong><span id="integration-status" class="status">Checking</span></div><div class="panel-body">
-          <div class="status-row"><span>Marketplace</span><strong>GameBoost</strong></div>
-          <div class="status-row"><span>Supabase</span><span id="supabase-status" class="status">Checking</span></div>
-          <div class="status-row"><span>GameBoost API</span><span class="status">Next phase</span></div>
-          <div class="status-row"><span>U7BUY</span><span>Future</span></div>
-        </div></div>
-      </div>`
-  },
-  products: { title: 'Products', html: `<div class="panel"><div class="panel-head"><strong>Products</strong></div><div class="empty">Canonical products will be managed here.</div></div>` },
-  listings: { title: 'Listings', html: `<div class="panel"><div class="panel-head"><strong>GameBoost Listings</strong></div><div class="empty">Offer mapping will be added after the GameBoost adapter.</div></div>` },
-  orders: { title: 'Orders', html: `<div class="panel"><div class="panel-head"><strong>Orders</strong></div><div class="empty">Normalized GameBoost orders will appear here.</div></div>` },
-  stock: { title: 'Stock', html: `<div class="panel"><div class="panel-head"><strong>Central Stock</strong></div><div class="empty">Inventory synchronization will be added with the API adapter.</div></div>` },
-  pricing: { title: 'Pricing', html: `<div class="panel"><div class="panel-head"><strong>Pricing Rules</strong></div><div class="empty">Pricing automation will be added after marketplace data is connected.</div></div>` },
-  delivery: { title: 'Delivery', html: `<div class="panel"><div class="panel-head"><strong>Delivery</strong></div><div class="empty">Delivery actions and proof logs will be managed here.</div></div>` },
-  settings: { title: 'Settings', html: `<div class="panel"><div class="panel-head"><strong>Settings</strong></div><div class="empty">Connection secrets will stay server-side. Public Supabase configuration is separate.</div></div>` }
-};
-
-async function loadDashboardStats() {
-  if (!supabase) {
-    connectionText.textContent = 'Demo mode';
-    connectionDot.classList.remove('connected');
-    document.getElementById('integration-status').textContent = 'Not configured';
-    document.getElementById('supabase-status').textContent = 'Add publishable key';
-    document.getElementById('recent-orders').textContent = 'Connect Supabase to load live data.';
-    return;
-  }
-
-  try {
-    const [products, listings, orders, inventory] = await Promise.all([
-      supabase.from('products').select('id', { count: 'exact', head: true }),
-      supabase.from('listings').select('id', { count: 'exact', head: true }),
-      supabase.from('orders').select('id', { count: 'exact', head: true }),
-      supabase.from('inventory').select('available')
-    ]);
-    const firstError = [products, listings, orders, inventory].find((result) => result.error)?.error;
-    if (firstError) throw firstError;
-
-    document.getElementById('products-count').textContent = products.count ?? 0;
-    document.getElementById('listings-count').textContent = listings.count ?? 0;
-    document.getElementById('orders-count').textContent = orders.count ?? 0;
-    document.getElementById('stock-count').textContent = (inventory.data || []).reduce((sum, row) => sum + Number(row.available || 0), 0);
-    document.getElementById('recent-orders').textContent = orders.count ? `${orders.count} orders available in Supabase.` : 'No orders yet.';
-    document.getElementById('integration-status').textContent = 'Connected';
-    document.getElementById('supabase-status').textContent = 'Connected';
-    connectionText.textContent = 'Supabase connected';
-    connectionDot.classList.add('connected');
-  } catch (error) {
-    document.getElementById('integration-status').textContent = 'Error';
-    document.getElementById('supabase-status').textContent = error.message;
-    connectionText.textContent = 'Supabase error';
-    connectionDot.classList.remove('connected');
-  }
-}
-
-function render(page) {
-  const selected = pages[page] || pages.dashboard;
-  title.textContent = selected.title;
-  content.innerHTML = selected.html;
-  document.querySelectorAll('[data-page]').forEach((button) => button.classList.toggle('active', button.dataset.page === page));
-  if (page === 'dashboard') loadDashboardStats();
-}
-
-document.querySelectorAll('[data-page]').forEach((button) => button.addEventListener('click', () => render(button.dataset.page)));
-render('dashboard');
+import { supabase } from './supabase.js';
+const content=document.getElementById('page-content');const title=document.getElementById('page-title');const connectionText=document.getElementById('connection-text');const connectionDot=document.getElementById('connection-dot');
+const pages={dashboard:{title:'Dashboard',html:`<div class="hero"><h2>GameBoost control center</h2><p>Central management for products, listings, orders, stock and automation.</p></div><div class="cards"><div class="card"><div class="card-label">Products</div><div class="card-value" id="products-count">—</div></div><div class="card"><div class="card-label">Listings</div><div class="card-value" id="listings-count">—</div></div><div class="card"><div class="card-label">Orders</div><div class="card-value" id="orders-count">—</div></div><div class="card"><div class="card-label">Stock</div><div class="card-value" id="stock-count">—</div></div></div><div class="grid"><div class="panel"><div class="panel-head"><strong>Recent orders</strong></div><div id="recent-orders" class="empty">Loading...</div></div><div class="panel"><div class="panel-head"><strong>Integration</strong><span id="integration-status" class="status">Checking</span></div><div class="panel-body"><div class="status-row"><span>Marketplace</span><strong>GameBoost</strong></div><div class="status-row"><span>Supabase</span><span id="supabase-status" class="status">Checking</span></div><div class="status-row"><span>GameBoost API</span><span id="gameboost-status" class="status">Ready</span></div></div></div></div>`},products:{title:'Products',html:`<div class="panel"><div class="panel-head"><strong>Products</strong><button class="action" data-sync>Sync GameBoost</button></div><div id="products-list" class="empty">Loading...</div></div>`},listings:{title:'Listings',html:`<div class="panel"><div class="panel-head"><strong>GameBoost Listings</strong><button class="action" data-sync>Sync GameBoost</button></div><div id="listings-list" class="table-wrap">Loading...</div></div>`},orders:{title:'Orders',html:`<div class="panel"><strong>Orders</strong><div class="empty">Orders will appear after the order adapter is connected.</div></div>`},stock:{title:'Stock',html:`<div class="panel"><strong>Central Stock</strong><div class="empty">Inventory synchronization follows listings.</div></div>`},pricing:{title:'Pricing',html:`<div class="panel"><strong>Pricing Rules</strong><div class="empty">Pricing automation follows live marketplace data.</div></div>`},delivery:{title:'Delivery',html:`<div class="panel"><strong>Delivery</strong><div class="empty">Delivery follows order integration.</div></div>`},settings:{title:'Settings',html:`<div class="panel"><strong>Settings</strong><div class="empty">Marketplace connections and automation.</div></div>`}};
+async function stats(){try{const [p,l,o,i]=await Promise.all([supabase.from('products').select('id',{count:'exact',head:true}),supabase.from('listings').select('id',{count:'exact',head:true}),supabase.from('orders').select('id',{count:'exact',head:true}),supabase.from('inventory').select('available')]);const e=[p,l,o,i].find(x=>x.error)?.error;if(e)throw e;document.getElementById('products-count').textContent=p.count??0;document.getElementById('listings-count').textContent=l.count??0;document.getElementById('orders-count').textContent=o.count??0;document.getElementById('stock-count').textContent=(i.data||[]).reduce((s,r)=>s+Number(r.available||0),0);document.getElementById('recent-orders').textContent=o.count?`${o.count} orders available.`:'No orders yet.';document.getElementById('integration-status').textContent='Connected';document.getElementById('supabase-status').textContent='Connected';connectionText.textContent='Signed in';connectionDot.classList.add('connected')}catch(e){connectionText.textContent='Database error';document.getElementById('supabase-status').textContent=e.message}}
+async function sync(){const bs=document.querySelectorAll('[data-sync]');bs.forEach(b=>{b.disabled=true;b.textContent='Syncing...'});try{const {data,error}=await supabase.functions.invoke('gameboost-api',{body:{operation:'import_offers'}});if(error)throw error;if(!data?.ok&&data?.imported===undefined)throw new Error(data?.error||'GameBoost sync failed');alert(`Sync selesai. Ditemukan ${data.offers_found??0}, masuk ${data.imported??0}, gagal ${data.failed??0}.`);await render('listings')}catch(e){alert(`GameBoost sync gagal: ${e.message}`)}finally{bs.forEach(b=>{b.disabled=false;b.textContent='Sync GameBoost'})}}
+const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+async function listings(){const box=document.getElementById('listings-list');try{const {data,error}=await supabase.from('listings').select('title,external_offer_id,price,currency,stock,status').order('updated_at',{ascending:false}).limit(100);if(error)throw error;if(!data?.length){box.innerHTML='<div class="empty">Belum ada listing. Tekan Sync GameBoost.</div>';return}box.innerHTML=`<table><thead><tr><th>Title</th><th>Offer ID</th><th>Price</th><th>Stock</th><th>Status</th></tr></thead><tbody>${data.map(x=>`<tr><td>${esc(x.title)}</td><td>${esc(x.external_offer_id||'-')}</td><td>${esc(x.price)} ${esc(x.currency)}</td><td>${x.stock}</td><td>${esc(x.status)}</td></tr>`).join('')}</tbody></table>`}catch(e){box.textContent=e.message}}
+async function render(page){const x=pages[page]||pages.dashboard;title.textContent=x.title;content.innerHTML=x.html;document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===page));if(page==='dashboard')await stats();if(page==='listings')await listings();document.querySelectorAll('[data-sync]').forEach(b=>b.addEventListener('click',sync))}
+document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>render(b.dataset.page)));supabase.auth.getSession().then(({data})=>{if(!data.session){location.href='login.html';return}render('dashboard')});
