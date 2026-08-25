@@ -1,9 +1,6 @@
 // Public Supabase configuration only.
-// Never place GameBoost secrets or service-role keys in this file.
+// This is safe to expose in a browser. Never place GameBoost secrets
+// or Supabase service-role keys here.
 export const SUPABASE_URL = 'https://tqsaukjmlwjucnmtstab.supabase.co';
-
-// Set this from the Supabase publishable/anon key when connecting the frontend.
-// Keeping it empty makes the dashboard continue to run in demo mode.
-export const SUPABASE_PUBLISHABLE_KEY = '';
-
+export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_XyP7nvVZwI3iZdIZgox7Vg_VnpFVuJW';
 export const MARKETPLACE = 'gameboost';
