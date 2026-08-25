@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Login — Marketplace Management</title>
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+<body>
+  <main class="auth-page">
+    <section class="auth-card">
+      <div class="brand"><div class="brand-mark">M</div><div><strong>Marketplace</strong><span>Management</span></div></div>
+      <h1>Sign in</h1>
+      <p class="auth-subtitle">Login untuk mengelola GameBoost.</p>
+      <form id="login-form">
+        <label>Email<input id="email" type="email" autocomplete="email" required /></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" required /></label>
+        <button class="action primary" type="submit">Login</button>
+        <p id="message" class="auth-message"></p>
+      </form>
+    </section>
+  </main>
+  <script type="module">
+    import { supabase } from './src/supabase.js';
+    const form=document.getElementById('login-form'); const msg=document.getElementById('message');
+    const {data}=await supabase.auth.getSession(); if(data.session) location.href='./';
+    form.addEventListener('submit',async(e)=>{e.preventDefault();msg.textContent='Memproses...';const {error}=await supabase.auth.signInWithPassword({email:email.value,password:password.value});if(error){msg.textContent=error.message;return}location.href='./'});
+  </script>
+</body>
+</html>
