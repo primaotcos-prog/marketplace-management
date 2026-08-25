@@ -75,7 +75,6 @@ async function supabaseRequest(env, path, init = {}) {
 }
 
 function normalizeEvent(request, envelope) {
-  // GameBoost sends { event: "item.order.purchased", payload: { ...order } }.
   const eventType = text(first(
     request.headers.get("x-gameboost-topic"),
     request.headers.get("X-GameBoost-Topic"),
@@ -115,8 +114,27 @@ async function findAccount(env) {
   return rows?.[0] || null;
 }
 
-// TEMPORARY WEBHOOK TEST MODE. Remove this block after the test is complete.
-const TEMP_TEST_TOKEN = "2E9DvKirr_aLZ66-20Ict5uCZoub6LZA";
+// Temporary browser-test support. Prefer GAMEBOOST_WEBHOOK_TEST_TOKEN in Cloudflare.
+// The legacy token remains only for compatibility with the already-shared test URL.
+const LEGACY_TEST_TOKEN = "2E9DvKirr_aLZ66-20Ict5uCZoub6LZA";
+
+function testTokenFromRequest(request, url, env) {
+  return text(first(
+    request.headers.get("x-gameboost-test-token"),
+    url.searchParams.get("token"),
+  )) || text(env.GAMEBOOST_WEBHOOK_TEST_TOKEN) || LEGACY_TEST_TOKEN;
+}
+
+function isAuthorizedTestRequest(request, url, env) {
+  const supplied = text(first(
+    request.headers.get("x-gameboost-test-token"),
+    url.searchParams.get("token"),
+  ));
+  if (!supplied) return false;
+  const configured = text(env.GAMEBOOST_WEBHOOK_TEST_TOKEN) || LEGACY_TEST_TOKEN;
+  return safeEqual(supplied, configured);
+}
+
 async function runTemporaryWebhookTest(env) {
   const secret = text(env.GAMEBOOST_WEBHOOK_SECRET);
   if (!secret) return json({ ok: false, error: "GAMEBOOST_WEBHOOK_SECRET belum dikonfigurasi." }, 503);
@@ -124,6 +142,8 @@ async function runTemporaryWebhookTest(env) {
   const testOrderId = `WEBHOOK_TEST_${Date.now()}`;
   const envelope = {
     event: "item.order.purchased",
+    event_id: testOrderId,
+    test_mode: true,
     payload: {
       id: testOrderId,
       item_offer_id: "WEBHOOK_TEST_OFFER",
@@ -131,6 +151,7 @@ async function runTemporaryWebhookTest(env) {
       quantity: 1,
       status: "pending",
       price_eur: "0.01",
+      currency: "EUR",
       buyer: { username: "webhook-test" },
       created_at: new Date().toISOString(),
     },
@@ -141,19 +162,23 @@ async function runTemporaryWebhookTest(env) {
     "x-gameboost-event-id": testOrderId,
     "x-gameboost-topic": "item.order.purchased",
     "x-gameboost-signature": await signature(secret, rawBody),
+    "x-gameboost-test-mode": "1",
   });
   const response = await onRequestPost({
     request: new Request("https://temporary-test.local/webhooks/gameboost", { method: "POST", headers, body: rawBody }),
     env,
   });
   const result = await response.json();
-  return json({ ok: response.ok, temporary_test: true, test_order_id: testOrderId, webhook_result: result }, response.status);
+  return json({ ok: response.ok, temporary_test: true, signature_verified: response.status !== 401, test_order_id: testOrderId, webhook_result: result }, response.status);
 }
 
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
-  if (url.pathname === "/webhooks/gameboost" && url.searchParams.get("test") === "1") {
-    if (url.searchParams.get("token") !== TEMP_TEST_TOKEN) return json({ ok: false, error: "Invalid test token." }, 403);
+  const isTestPath = url.pathname === "/webhooks/gameboost/test";
+  const isLegacyTestQuery = url.pathname === "/webhooks/gameboost" && url.searchParams.get("test") === "1";
+
+  if (isTestPath || isLegacyTestQuery) {
+    if (!isAuthorizedTestRequest(request, url, env)) return json({ ok: false, error: "Invalid test token." }, 403);
     return runTemporaryWebhookTest(env);
   }
 
@@ -162,6 +187,7 @@ export async function onRequestGet({ request, env }) {
     service: "gameboost-webhook",
     configured: Boolean(text(env.GAMEBOOST_WEBHOOK_SECRET) && text(env.SUPABASE_URL) && text(env.SUPABASE_SERVICE_ROLE_KEY)),
     endpoint: "/webhooks/gameboost",
+    test_endpoint: "/webhooks/gameboost/test?token=YOUR_TEST_TOKEN",
   });
 }
 
@@ -176,12 +202,13 @@ export async function onRequestPost({ request, env }) {
   try { envelope = JSON.parse(rawBody); } catch { return json({ ok: false, error: "Invalid JSON payload." }, 400); }
 
   const info = normalizeEvent(request, envelope);
+  const isTestMode = request.headers.get("x-gameboost-test-mode") === "1" || envelope?.test_mode === true;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawBody));
   const eventId = info.eventId || hex(digest);
 
   try {
     const existing = await supabaseRequest(env, `webhook_events?marketplace=eq.gameboost&event_id=eq.${escPath(eventId)}&select=id,status&limit=1`);
-    if (existing?.[0]?.status === "processed") return json({ ok: true, duplicate: true, event_id: eventId });
+    if (existing?.[0]?.status === "processed") return json({ ok: true, duplicate: true, event_id: eventId, test_mode: isTestMode });
 
     if (!existing?.[0]) {
       await supabaseRequest(env, "webhook_events", {
@@ -197,7 +224,7 @@ export async function onRequestPost({ request, env }) {
       await supabaseRequest(env, `webhook_events?marketplace=eq.gameboost&event_id=eq.${escPath(eventId)}`, {
         method: "PATCH", body: JSON.stringify({ status: "processed", processed_at: new Date().toISOString() }),
       });
-      return json({ ok: true, event_id: eventId, event_type: info.eventType, order_persisted: false });
+      return json({ ok: true, event_id: eventId, event_type: info.eventType, order_persisted: false, test_mode: isTestMode });
     }
 
     let listing = null;
@@ -233,8 +260,9 @@ export async function onRequestPost({ request, env }) {
       savedOrder = created?.[0] || null;
     }
 
-    // Only the purchase event consumes listing stock. Completion/refund events must not decrement it again.
-    if (listing && info.eventType === "item.order.purchased") {
+    // Test requests must never consume real listing stock.
+    // Real purchase events still decrement stock exactly once.
+    if (!isTestMode && listing && info.eventType === "item.order.purchased") {
       const nextStock = Math.max(0, (num(listing.stock) ?? 0) - info.quantity);
       await supabaseRequest(env, `listings?id=eq.${escPath(listing.id)}`, {
         method: "PATCH",
@@ -251,19 +279,19 @@ export async function onRequestPost({ request, env }) {
       body: JSON.stringify({
         user_id: account.user_id,
         marketplace_account_id: account.id,
-        operation: "gameboost_webhook",
+        operation: isTestMode ? "gameboost_webhook_test" : "gameboost_webhook",
         status: "success",
-        message: `${info.eventType} received for order ${info.orderId}.`,
-        metadata: { event_id: eventId, event_type: info.eventType, offer_id: info.offerId || null, order_id: savedOrder?.id || null, listing_matched: Boolean(listing) },
+        message: `${info.eventType} received for order ${info.orderId}${isTestMode ? " (TEST MODE)" : ""}.`,
+        metadata: { event_id: eventId, event_type: info.eventType, offer_id: info.offerId || null, order_id: savedOrder?.id || null, listing_matched: Boolean(listing), test_mode: isTestMode },
       }),
     });
 
-    return json({ ok: true, event_id: eventId, event_type: info.eventType, external_order_id: info.orderId, order_id: savedOrder?.id || null, listing_matched: Boolean(listing) });
+    return json({ ok: true, event_id: eventId, event_type: info.eventType, external_order_id: info.orderId, order_id: savedOrder?.id || null, listing_matched: Boolean(listing), stock_changed: !isTestMode && Boolean(listing && info.eventType === "item.order.purchased"), test_mode: isTestMode });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     try {
       await supabaseRequest(env, `webhook_events?marketplace=eq.gameboost&event_id=eq.${escPath(eventId)}`, { method: "PATCH", body: JSON.stringify({ status: "failed", error_message: message }) });
     } catch {}
-    return json({ ok: false, error: message, event_id: eventId }, 500);
+    return json({ ok: false, error: message, event_id: eventId, test_mode: isTestMode }, 500);
   }
 }
