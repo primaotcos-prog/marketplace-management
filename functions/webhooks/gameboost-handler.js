@@ -62,7 +62,7 @@ function isTestRequest(request, url) {
 }
 
 function testUi() {
-  return new Response(`<!doctype html><html lang="id"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>GameBoost Webhook Test</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:24px;background:#0b0f14;color:#eef2f7}button{background:#2563eb;color:white;border:0;border-radius:10px;padding:12px 18px;font-size:16px}pre{white-space:pre-wrap;background:#151b23;padding:16px;border-radius:10px;margin-top:18px}p{color:#aab4c0}</style></head><body><h1>GameBoost Webhook Test</h1><p>Safe smoke test. Tidak membuat order GameBoost dan tidak mengubah stock.</p><button id="run">Send Test Webhook</button><pre id="result">Belum ada test.</pre><script>document.getElementById('run').onclick=async()=>{const b=document.getElementById('run'),r=document.getElementById('result');b.disabled=true;r.textContent='Mengirim POST...';try{const payload={event:'order.purchased',event_id:'smoke-test-'+Date.now(),order_id:'TEST-ORDER-001',test:true};const res=await fetch('/webhooks/gameboost/test',{method:'POST',headers:{'content-type':'application/json','x-gameboost-test-mode':'1'},body:JSON.stringify(payload)});const data=await res.json();r.textContent=JSON.stringify(data,null,2)}catch(e){r.textContent='Test gagal: '+e.message}finally{b.disabled=false}};</script></body></html>`,{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store"}});
+  return new Response(`<!doctype html><html lang="id"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>GameBoost Webhook Test</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:24px;background:#0b0f14;color:#eef2f7}button{background:#2563eb;color:white;border:0;border-radius:10px;padding:12px 18px;font-size:16px;margin:6px 6px 6px 0}button.secondary{background:#374151}button:disabled{opacity:.6}pre{white-space:pre-wrap;background:#151b23;padding:16px;border-radius:10px;margin-top:18px}p{color:#aab4c0}</style></head><body><h1>GameBoost Webhook Test</h1><p>Safe tests. Tidak membuat order GameBoost dan tidak mengubah stock.</p><button id="run">1. Smoke Test</button><button id="signed" class="secondary">2. Test Production Signature</button><pre id="result">Belum ada test.</pre><script>const result=document.getElementById('result');const buttons=[document.getElementById('run'),document.getElementById('signed')];async function send(url,headers={}){buttons.forEach(b=>b.disabled=true);result.textContent='Mengirim POST...';try{const payload={event:'order.purchased',event_id:'signature-test-'+Date.now(),order_id:'TEST-ORDER-001',test:true};const res=await fetch(url,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(payload)});const data=await res.json();result.textContent=JSON.stringify(data,null,2)}catch(e){result.textContent='Test gagal: '+e.message}finally{buttons.forEach(b=>b.disabled=false)}}document.getElementById('run').onclick=()=>send('/webhooks/gameboost/test',{'x-gameboost-test-mode':'1'});document.getElementById('signed').onclick=()=>send('/webhooks/gameboost?test=1');</script></body></html>`,{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store"}});
 }
 
 export async function onRequestGet({ request, env }) {
@@ -95,7 +95,7 @@ export async function onRequestPost({ request, env }) {
 
   // Explicit test endpoint is deliberately non-mutating and does not require
   // the production GameBoost signing secret. This is only a transport/smoke test.
-  if (isTestRequest(request, url)) {
+  if (isTestRequest(request, url) && url.pathname === "/webhooks/gameboost/test") {
     let payload = null;
     try {
       payload = rawBody ? JSON.parse(rawBody) : null;
@@ -115,6 +115,48 @@ export async function onRequestPost({ request, env }) {
       event_id: payload?.event_id || payload?.id || null,
       message: "Webhook smoke test accepted. No real order or stock mutation was performed.",
     });
+  }
+
+  // A local production-signature test is allowed only with ?test=1. It signs
+  // the exact JSON body with the configured server-side secret and then runs
+  // through the same production verification path. It is still non-mutating.
+  const localSignatureTest = url.pathname === "/webhooks/gameboost" && url.searchParams.get("test") === "1";
+  if (localSignatureTest) {
+    const secret = text(env.GAMEBOOST_WEBHOOK_SECRET);
+    if (!secret) return json({ ok: false, test: true, error: "GAMEBOOST_WEBHOOK_SECRET belum dikonfigurasi." }, 503);
+
+    let payload;
+    try {
+      payload = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      return json({ ok: false, test: true, error: "Invalid JSON payload." }, 400);
+    }
+
+    // Re-serialize exactly as the body that will be verified.
+    const exactBody = JSON.stringify(payload);
+    const signature = await sign(secret, exactBody);
+    const testRequest = new Request(request.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-gameboost-signature": signature },
+      body: exactBody,
+    });
+    const verified = await verifyGameBoostSignature(testRequest, exactBody, secret);
+
+    return json({
+      ok: verified,
+      test: true,
+      received: true,
+      signature_checked: true,
+      signature_valid: verified,
+      mutated: false,
+      order_created: false,
+      stock_changed: false,
+      event: payload?.event || payload?.type || null,
+      event_id: payload?.event_id || payload?.id || null,
+      message: verified
+        ? "Production signature verification passed. No real order or stock mutation was performed."
+        : "Production signature verification failed.",
+    }, verified ? 200 : 401);
   }
 
   // Production GameBoost endpoint remains strictly signature protected.
