@@ -10,7 +10,7 @@ if (!window.__listingToolsLoaded) {
   function styles(){
     if(document.getElementById('listing-tools-styles'))return;
     const s=document.createElement('style');s.id='listing-tools-styles';
-    s.textContent='.listing-tools{display:flex;gap:8px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--border)}.listing-tools-modal{position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:9999;display:grid;place-items:center;padding:12px}.listing-tools-card{width:min(820px,100%);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px}.listing-tools-card textarea{box-sizing:border-box;width:100%;min-height:260px;background:#090d13;color:var(--text);border:1px solid var(--border);border-radius:9px;padding:10px;font:11px/1.5 ui-monospace,SFMono-Regular,monospace}.listing-tools-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}.listing-tools-msg{white-space:pre-wrap;font-size:11px;margin-top:10px}.listing-tools-msg.err{color:#ffaaaa}.listing-tools-msg.ok{color:var(--success)}.delete-list{display:grid;gap:7px;max-height:52vh;overflow:auto;margin-top:10px}.delete-item{display:grid;grid-template-columns:auto 1fr;gap:9px;padding:9px;border:1px solid var(--border);border-radius:9px;background:#0c1118}.delete-item strong{font-size:11px;word-break:break-word}.delete-item small{display:block;color:var(--muted);font-size:9px;margin-top:3px}';
+    s.textContent='.listing-tools{display:flex;gap:8px;flex-wrap:wrap}.listing-tools .action{white-space:nowrap}.listing-tool-danger{border-color:#7f3030!important}.listing-tools-modal{position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:9999;display:grid;place-items:center;padding:12px}.listing-tools-card{width:min(820px,100%);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px}.listing-tools-card textarea{box-sizing:border-box;width:100%;min-height:260px;background:#090d13;color:var(--text);border:1px solid var(--border);border-radius:9px;padding:10px;font:11px/1.5 ui-monospace,SFMono-Regular,monospace}.listing-tools-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}.listing-tools-msg{white-space:pre-wrap;font-size:11px;margin-top:10px}.listing-tools-msg.err{color:#ffaaaa}.listing-tools-msg.ok{color:var(--success)}.delete-list{display:grid;gap:7px;max-height:52vh;overflow:auto;margin-top:10px}.delete-item{display:grid;grid-template-columns:auto 1fr;gap:9px;padding:9px;border:1px solid var(--border);border-radius:9px;background:#0c1118}.delete-item strong{font-size:11px;word-break:break-word}.delete-item small{display:block;color:var(--muted);font-size:9px;margin-top:3px}';
     document.head.appendChild(s);
   }
 
@@ -44,11 +44,7 @@ if (!window.__listingToolsLoaded) {
         let ok=0,fail=0,errors=[];const b=m.querySelector('[data-delete]');b.disabled=true;
         for(const id of ids){
           const x=items.find(r=>r.id===id);
-          try{
-            if(!x?.external_offer_id)throw Error('Listing tidak memiliki Offer ID GameBoost.');
-            await archiveApi(x.external_offer_id);
-            const q=await supabase.from('listings').delete().eq('id',id);if(q.error)throw q.error;ok++;
-          }catch(e){fail++;errors.push(`${x?.title||id}: ${e.message}`)}
+          try{if(!x?.external_offer_id)throw Error('Listing tidak memiliki Offer ID GameBoost.');await archiveApi(x.external_offer_id);const q=await supabase.from('listings').delete().eq('id',id);if(q.error)throw q.error;ok++}catch(e){fail++;errors.push(`${x?.title||id}: ${e.message}`)}
         }
         msg.className=`listing-tools-msg ${fail?'err':'ok'}`;msg.textContent=`Selesai. Berhasil diarsipkan & dihapus lokal: ${ok}. Gagal: ${fail}.${errors.length?'\n'+errors.join('\n'):''}`;b.disabled=false;
         if(ok)document.querySelector('[data-sync]')?.click();
@@ -56,6 +52,31 @@ if (!window.__listingToolsLoaded) {
     }catch(e){list.innerHTML=`<div class="empty">Gagal memuat listing: ${esc(e.message)}</div>`;count.textContent='Gagal'}
   }
 
-  let last=null;
-  setInterval(()=>{const list=document.getElementById('listings-list'),head=list?.closest('.panel')?.querySelector('.panel-head');if(list!==last){last=list;if(list&&head&&!head.querySelector('[data-listing-tools]')){styles();const bar=document.createElement('div');bar.className='listing-tools';bar.dataset.listingTools='1';bar.innerHTML='<button type="button" class="action" data-bulk-listing>Bulk Listing</button><button type="button" class="action listing-tool-danger" data-delete-listings>Arsipkan & Hapus</button>';head.insertAdjacentElement('afterend',bar);bar.querySelector('[data-bulk-listing]').onclick=bulk;bar.querySelector('[data-delete-listings]').onclick=removeListings)}},1000);
+  function inject(){
+    styles();
+    const list=document.getElementById('listings-list');
+    if(!list)return false;
+    const panel=list.closest('.panel');
+    const head=panel?.querySelector('.panel-head');
+    if(!panel||!head)return false;
+    let bar=head.querySelector('[data-listing-tools]');
+    if(bar)return true;
+    bar=document.createElement('div');
+    bar.className='listing-tools';
+    bar.dataset.listingTools='1';
+    bar.innerHTML='<button type="button" class="action" data-bulk-listing>Bulk Listing</button><button type="button" class="action listing-tool-danger" data-delete-listings>Arsipkan & Hapus</button>';
+    const actions=head.querySelector('.panel-head-actions');
+    if(actions){actions.insertBefore(bar,actions.firstChild)}else{head.appendChild(bar)}
+    bar.querySelector('[data-bulk-listing]').onclick=bulk;
+    bar.querySelector('[data-delete-listings]').onclick=removeListings;
+    return true;
+  }
+
+  const observer=new MutationObserver(()=>inject());
+  observer.observe(document.body,{childList:true,subtree:true});
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',inject,{once:true});
+  else inject();
+  setTimeout(inject,300);
+  setTimeout(inject,1000);
+  setTimeout(inject,2500);
 }
