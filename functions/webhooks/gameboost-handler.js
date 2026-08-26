@@ -61,15 +61,21 @@ function isTestRequest(request, url) {
     || url.searchParams.get("test") === "1";
 }
 
+function testUi() {
+  return new Response(`<!doctype html><html lang="id"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>GameBoost Webhook Test</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:24px;background:#0b0f14;color:#eef2f7}button{background:#2563eb;color:white;border:0;border-radius:10px;padding:12px 18px;font-size:16px}pre{white-space:pre-wrap;background:#151b23;padding:16px;border-radius:10px;margin-top:18px}p{color:#aab4c0}</style></head><body><h1>GameBoost Webhook Test</h1><p>Safe smoke test. Tidak membuat order GameBoost dan tidak mengubah stock.</p><button id="run">Send Test Webhook</button><pre id="result">Belum ada test.</pre><script>document.getElementById('run').onclick=async()=>{const b=document.getElementById('run'),r=document.getElementById('result');b.disabled=true;r.textContent='Mengirim POST...';try{const payload={event:'order.purchased',event_id:'smoke-test-'+Date.now(),order_id:'TEST-ORDER-001',test:true};const res=await fetch('/webhooks/gameboost/test',{method:'POST',headers:{'content-type':'application/json','x-gameboost-test-mode':'1'},body:JSON.stringify(payload)});const data=await res.json();r.textContent=JSON.stringify(data,null,2)}catch(e){r.textContent='Test gagal: '+e.message}finally{b.disabled=false}};</script></body></html>`,{status:200,headers:{"content-type":"text/html; charset=utf-8","cache-control":"no-store"}});
+}
+
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
 
   if (url.pathname === "/webhooks/gameboost/test") {
+    if (url.searchParams.get("ui") === "1") return testUi();
     return json({
       ok: true,
       test_endpoint: true,
       method: "POST",
       production_endpoint: "/webhooks/gameboost",
+      test_ui: "/webhooks/gameboost/test?ui=1",
       message: "Test endpoint is reachable. POST a JSON payload to run a safe smoke test. No order or stock is changed.",
     });
   }
