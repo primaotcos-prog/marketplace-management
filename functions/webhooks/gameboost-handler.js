@@ -88,13 +88,125 @@ function testUi() {
   return new Response(`<!doctype html><html lang="id"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>GameBoost Webhook Test</title><style>body{font-family:system-ui,sans-serif;max-width:760px;margin:auto;padding:24px;background:#0b0f14;color:#eef2f7}button{background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px 15px;font-size:15px;margin:6px 6px 6px 0}.secondary{background:#374151}button:disabled{opacity:.6}pre{white-space:pre-wrap;background:#151b23;padding:16px;border-radius:10px;margin-top:18px;font-size:13px}p{color:#aab4c0}</style></head><body><h1>GameBoost Webhook Test</h1><p>Semua test sintetis. Tidak membuat order GameBoost dan tidak mengubah stock.</p><button data-type="item">Item Order Test</button><button data-type="currency">Currency Order Test</button><button data-type="account">Account Order Test</button><button data-type="gift_card">Gift Card Test</button><button id="signed" class="secondary">Production Signature Test</button><pre id="result">Belum ada test.</pre><script>const out=document.getElementById('result'),bs=[...document.querySelectorAll('button')];async function post(url,body){bs.forEach(b=>b.disabled=true);out.textContent='Mengirim POST...';try{const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});out.textContent=JSON.stringify(await r.json(),null,2)}catch(e){out.textContent='Test gagal: '+e.message}finally{bs.forEach(b=>b.disabled=false)}}document.querySelectorAll('[data-type]').forEach(b=>b.onclick=()=>post('/webhooks/gameboost/test?type='+encodeURIComponent(b.dataset.type),{}));document.getElementById('signed').onclick=()=>post('/webhooks/gameboost?test=1',${JSON.stringify(makeTestPayload("item"))});</script></body></html>`, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
+function supabaseConfig(env) {
+  const baseUrl = text(env.SUPABASE_URL);
+  const serviceKey = text(env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY);
+  return baseUrl && serviceKey ? { baseUrl: baseUrl.replace(/\/$/, ""), serviceKey } : null;
+}
+
+async function supabaseRequest(env, path, options = {}) {
+  const config = supabaseConfig(env);
+  if (!config) throw new Error("SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY belum dikonfigurasi.");
+  const response = await fetch(`${config.baseUrl}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: config.serviceKey,
+      Authorization: `Bearer ${config.serviceKey}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const raw = await response.text();
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
+  if (!response.ok) throw new Error(`Supabase ${response.status}: ${typeof data === "string" ? data : JSON.stringify(data)}`);
+  return data;
+}
+
+function offerIdForEvent(event, payload) {
+  if (event === "item.order.purchased") return payload?.item_offer_id;
+  if (event === "currency.order.purchased") return payload?.currency_offer_id;
+  if (event === "account.order.purchased") return payload?.account_offer_id;
+  if (event === "gift_card.order.purchased") return payload?.gift_card_offer_id;
+  return null;
+}
+
+function orderAmount(payload) {
+  const value = payload?.price_usd ?? payload?.price ?? payload?.price_eur ?? payload?.unit_price_usd ?? payload?.unit_price_eur;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function orderCurrency(payload) {
+  if (payload?.price_usd != null || payload?.unit_price_usd != null) return "USD";
+  if (payload?.price_eur != null || payload?.unit_price_eur != null) return "EUR";
+  return "USD";
+}
+
+function payloadTimestamp(value) {
+  if (value == null) return new Date().toISOString();
+  const n = Number(value);
+  if (Number.isFinite(n)) return new Date(n < 100000000000 ? n * 1000 : n).toISOString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
+
+async function persistOrder(env, event, payload, eventId) {
+  const accounts = await supabaseRequest(env, "marketplace_accounts?marketplace=eq.gameboost&status=eq.connected&select=id,user_id&limit=1");
+  const account = Array.isArray(accounts) ? accounts[0] : null;
+  if (!account) throw new Error("Marketplace account GameBoost yang connected tidak ditemukan di Supabase.");
+
+  const offerId = offerIdForEvent(event, payload);
+  let listing = null;
+  if (offerId != null) {
+    const listings = await supabaseRequest(env, `listings?marketplace_account_id=eq.${encodeURIComponent(account.id)}&external_offer_id=eq.${encodeURIComponent(String(offerId))}&select=id,product_id&limit=1`);
+    listing = Array.isArray(listings) ? listings[0] : null;
+  }
+
+  const externalOrderId = String(payload?.id ?? eventId ?? "");
+  if (!externalOrderId) throw new Error("GameBoost order id tidak ditemukan.");
+
+  const existing = await supabaseRequest(env, `orders?marketplace_account_id=eq.${encodeURIComponent(account.id)}&external_order_id=eq.${encodeURIComponent(externalOrderId)}&select=id&limit=1`);
+  const existingOrder = Array.isArray(existing) ? existing[0] : null;
+
+  const row = {
+    user_id: account.user_id,
+    marketplace_account_id: account.id,
+    product_id: listing?.product_id || null,
+    external_order_id: externalOrderId,
+    buyer_reference: text(payload?.buyer?.username || payload?.buyer?.id || "") || null,
+    quantity: Math.max(1, Number(payload?.quantity) || 1),
+    amount: orderAmount(payload),
+    currency: orderCurrency(payload),
+    status: payload?.refunded_at ? "refunded" : "confirmed",
+    delivery_status: payload?.completed_at ? "completed" : "pending",
+    raw_data: { event, event_id: eventId || null, payload },
+    created_at: payloadTimestamp(payload?.created_at || payload?.purchased_at),
+    updated_at: payloadTimestamp(payload?.updated_at),
+  };
+
+  let saved;
+  if (existingOrder?.id) {
+    saved = await supabaseRequest(env, `orders?id=eq.${encodeURIComponent(existingOrder.id)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(row),
+    });
+  } else {
+    saved = await supabaseRequest(env, "orders", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(row),
+    });
+  }
+
+  return {
+    persisted: true,
+    action: existingOrder?.id ? "updated" : "created",
+    order_id: Array.isArray(saved) ? saved[0]?.id || existingOrder?.id : existingOrder?.id,
+    external_order_id: externalOrderId,
+    product_id: listing?.product_id || null,
+    listing_matched: Boolean(listing),
+  };
+}
+
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   if (url.pathname === "/webhooks/gameboost/test") {
     if (url.searchParams.get("ui") === "1") return testUi();
     return json({ ok: true, test_endpoint: true, method: "POST", production_endpoint: "/webhooks/gameboost", test_ui: "/webhooks/gameboost/test?ui=1", payload_format: "GameBoost event + nested payload", message: "Synthetic test endpoint. No order or stock is changed." });
   }
-  return json({ ok: true, service: "gameboost-webhook", configured: Boolean(text(env.GAMEBOOST_WEBHOOK_SECRET)), endpoint: "/webhooks/gameboost", test_endpoint: "/webhooks/gameboost/test" });
+  return json({ ok: true, service: "gameboost-webhook", configured: Boolean(text(env.GAMEBOOST_WEBHOOK_SECRET)), persistence_configured: Boolean(supabaseConfig(env)), endpoint: "/webhooks/gameboost", test_endpoint: "/webhooks/gameboost/test" });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -149,9 +261,18 @@ export async function onRequestPost({ request, env }) {
   const eventId = text(request.headers.get("x-gameboost-event-id"));
   const userAgent = text(request.headers.get("user-agent"));
   if (!event || !payload?.payload) return json({ ok: false, error: "Invalid GameBoost webhook payload: event and payload are required." }, 400);
+  if (!topic && !event) return json({ ok: false, error: "GameBoost event topic is required." }, 400);
   if (topic && topic !== event) return json({ ok: false, error: "GameBoost topic header does not match payload event." }, 400);
+  if (!Object.values(supportedEvents).includes(event)) return json({ ok: false, error: `Unsupported GameBoost event: ${event}` }, 400);
 
-  return json({ ok: true, received: true, test: false, signature_checked: true, signature_valid: true, payload_shape_valid: true,
-    event, event_id: eventId || null, topic: topic || null, gameboost_user_agent: userAgent || null,
-    message: "GameBoost webhook signature verified and GameBoost payload accepted." });
+  try {
+    const persistence = await persistOrder(env, event, payload.payload, eventId);
+    return json({ ok: true, received: true, test: false, signature_checked: true, signature_valid: true, payload_shape_valid: true,
+      event, event_id: eventId || null, topic: topic || null, gameboost_user_agent: userAgent || null, ...persistence,
+      message: "GameBoost webhook verified and order persisted to Supabase." });
+  } catch (error) {
+    return json({ ok: false, received: true, test: false, signature_checked: true, signature_valid: true, payload_shape_valid: true,
+      event, event_id: eventId || null, persistence_failed: true, error: error?.message || String(error),
+      message: "GameBoost webhook was verified, but the order could not be persisted to Supabase." }, 500);
+  }
 }
