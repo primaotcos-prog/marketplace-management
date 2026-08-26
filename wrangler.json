@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
+  "name": "marketplace-management",
+  "main": "_worker.js",
+  "compatibility_date": "2026-08-26",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS"
+  }
+}
