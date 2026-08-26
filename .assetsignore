@@ -1,0 +1,8 @@
+# Keep Worker/server code out of the public static asset bundle.
+_worker.js
+functions/
+supabase/
+docs/
+wrangler.json
+.gitignore
+README.md
