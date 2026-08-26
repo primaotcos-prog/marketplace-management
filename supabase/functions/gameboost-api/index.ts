@@ -8,13 +8,47 @@ const num=(v:any)=>{if(v==null||v==="")return null;if(typeof v==='number')return
 const stock=(v:any)=>Math.max(0,Math.trunc(num(v)??0));
 const offers=(p:any):any[]=>{if(Array.isArray(p))return p;if(!p||typeof p!=='object')return[];for(const v of[p.data,p.items,p.offers,p.results]){if(Array.isArray(v))return v;if(v&&typeof v==='object'){const n=offers(v);if(n.length)return n}}return[]};
 const price=(v:any)=>{const n=num(v&&typeof v==='object'?first(v.value,v.amount!=null?Number(v.amount)/100:null):v);return n==null?0:Math.max(0,n)};
-const validStatus=(v:any)=>{const s=String(v??'').toLowerCase();if(['active','listed'].includes(s))return 'active';if(['draft','inactive','disabled','unavailable'].includes(s))return 'draft';if(['archived','paused','sold_out','error'].includes(s))return 'paused';return 'active'};
+const validStatus=(v:any)=>{const s=String(v??'').toLowerCase();if(['active','listed','published'].includes(s))return 'active';if(['draft','inactive','disabled','unavailable'].includes(s))return 'draft';if(['archived','paused','sold_out','error'].includes(s))return 'paused';return 'active'};
 const base=()=> (Deno.env.get('GAMEBOOST_BASE_URL')||'https://api.gameboost.com/v2').replace(/\/$/,'');
 async function gbRequest(path:string,method='GET',body?:any){const key=Deno.env.get('GAMEBOOST_API_KEY');if(!key)throw Error('GAMEBOOST_API_KEY belum dikonfigurasi.');const r=await fetch(base()+path,{method,headers:{Authorization:`Bearer ${key}`,Accept:'application/json','Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const t=await r.text();let d:any;try{d=t?JSON.parse(t):null}catch{d={raw:t}}if(!r.ok)throw Error(d?.message||d?.error||`GameBoost HTTP ${r.status}`);return{status:r.status,data:d}};
 async function userClients(req:Request){const auth=req.headers.get('Authorization');if(!auth?.startsWith('Bearer '))throw Object.assign(Error('Missing authorization'),{status:401});const url=Deno.env.get('SUPABASE_URL')!;const userClient=createClient(url,Deno.env.get('SUPABASE_ANON_KEY')!,{global:{headers:{Authorization:auth}}});const {data:{user},error}=await userClient.auth.getUser();if(error||!user)throw Object.assign(Error('Invalid or expired session'),{status:401});return {user,admin:createClient(url,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{autoRefreshToken:false,persistSession:false}})}}
 async function account(admin:any,user:any){let a=(await admin.from('marketplace_accounts').select('*').eq('user_id',user.id).eq('marketplace','gameboost').eq('display_name','GameBoost').limit(1)).data?.[0];if(a){const u=await admin.from('marketplace_accounts').update({status:'connected',updated_at:new Date().toISOString()}).eq('id',a.id).eq('user_id',user.id).select('*').single();if(u.error)throw u.error;return u.data}const c=await admin.from('marketplace_accounts').insert({user_id:user.id,marketplace:'gameboost',display_name:'GameBoost',status:'connected'}).select('*').single();if(c.error)throw c.error;return c.data}
 async function saveOffer(admin:any,user:any,a:any,o:any){const external=String(first(o?.id,o?.uuid,o?.offer_id,o?.external_id,''));if(!external)throw Error('Offer tidak memiliki ID');const game=String(first(o?.game?.name,o?.game_name,o?.game,'Unknown Game'));const name=String(first(o?.product_name,o?.title,o?.name,`GameBoost ${external}`));let p=(await admin.from('products').select('*').eq('user_id',user.id).eq('name',name).eq('game',game).limit(1)).data?.[0];if(!p){const c=await admin.from('products').insert({user_id:user.id,name,game,product_type:'gameboost_offer',description:first(o?.description,null),active:true}).select('*').single();if(c.error)throw c.error;p=c.data}const payload={user_id:user.id,product_id:p.id,marketplace_account_id:a.id,external_offer_id:external,title:String(first(o?.title,o?.name,p.name,`Offer ${external}`)),status:validStatus(o?.status),price:price(first(o?.price_eur,o?.price)),currency:'EUR',stock:stock(first(o?.stock,o?.marketplace_stock,o?.quantity)),metadata:o??{},updated_at:new Date().toISOString()};const q=await admin.from('listings').select('id').eq('user_id',user.id).eq('marketplace_account_id',a.id).eq('external_offer_id',external).limit(1);if(q.error)throw q.error;if(q.data?.[0]){const u=await admin.from('listings').update(payload).eq('id',q.data[0].id).eq('user_id',user.id);if(u.error)throw u.error}else{const c=await admin.from('listings').insert(payload);if(c.error)throw c.error}return payload}
-async function importOffers(admin:any,user:any){const gb=await gbRequest('/item-offers');const offersList=offers(gb.data);const a=await account(admin,user);let imported=0,failed=0;const errors:any[]=[];for(const o of offersList){try{await saveOffer(admin,user,a,o);imported++}catch(e){failed++;if(errors.length<25)errors.push({offer_id:first(o?.id,o?.uuid,o?.offer_id,null),message:e instanceof Error?e.message:String(e)})}}const log=await admin.from('sync_logs').insert({user_id:user.id,marketplace_account_id:a.id,operation:'import_item_offers',status:failed?'failed':'success',message:`GameBoost HTTP ${gb.status}: ${imported} imported, ${failed} failed.`,metadata:{gameboost_status:gb.status,offers_found:offersList.length,failed,errors}});return {ok:failed===0,gameboost_status:gb.status,offers_found:offersList.length,imported,failed,errors,sync_log_saved:!log.error};}
+async function importOffers(admin:any,user:any){
+  const a=await account(admin,user);
+  const pageSize=50;
+  let page=1;
+  let totalPages=1;
+  let offersFound=0;
+  let imported=0,failed=0;
+  const errors:any[]=[];
+  const seen=new Set<string>();
+  const pages:any[]=[];
+  while(page<=totalPages){
+    const gb=await gbRequest(`/item-offers?per_page=${pageSize}&page=${page}&sort=-updated_at`);
+    const list=offers(gb.data);
+    pages.push({page,status:gb.status,count:list.length});
+    offersFound+=list.length;
+    const meta=gb.data?.meta ?? gb.data?.data?.meta;
+    const lp=Number(meta?.last_page);
+    if(Number.isFinite(lp)&&lp>0) totalPages=Math.max(totalPages,lp);
+    else if(list.length<pageSize) totalPages=page;
+    for(const o of list){
+      const id=String(first(o?.id,o?.uuid,o?.offer_id,o?.external_id,''));
+      if(id&&seen.has(id)) continue;
+      if(id) seen.add(id);
+      try{await saveOffer(admin,user,a,o);imported++}
+      catch(e){failed++;if(errors.length<25)errors.push({offer_id:first(o?.id,o?.uuid,o?.offer_id,null),message:e instanceof Error?e.message:String(e)})}
+    }
+    if(list.length===0)break;
+    page++;
+    if(page>1000)throw Error('Pagination GameBoost melebihi batas aman 1000 halaman.');
+  }
+  const status=failed?'failed':'success';
+  const message=`GameBoost pagination: ${offersFound} found across ${pages.length} page(s), ${imported} imported, ${failed} failed.`;
+  const log=await admin.from('sync_logs').insert({user_id:user.id,marketplace_account_id:a.id,operation:'import_item_offers',status,message,metadata:{gameboost_status:200,offers_found:offersFound,imported,failed,errors,pages,page_size:pageSize}});
+  return {ok:failed===0,gameboost_status:200,offers_found:offersFound,imported,failed,errors,pages,page_size:pageSize,sync_log_saved:!log.error};
+}
 
 Deno.serve(async(req)=>{if(req.method==='OPTIONS')return new Response('ok',{headers:C});if(req.method!=='POST')return json({ok:false,error:'POST only'},405);try{const {user,admin}=await userClients(req);let body:any={};try{body=await req.json()}catch{}const op=body?.operation||'health';
 if(op==='health')return json({ok:true,authenticated:true,configured:Boolean(Deno.env.get('GAMEBOOST_API_KEY'))});
@@ -23,7 +57,22 @@ if(op==='list_games'){const q=String(body?.search||'').trim();const params=new U
 if(op==='get_game'){const slug=String(first(body?.slug,body?.game,''));if(!slug)return json({ok:false,error:'slug wajib diisi'},400);const gb=await gbRequest(`/games/${encodeURIComponent(slug)}`);return json({ok:true,gameboost_status:gb.status,game:gb.data?.data??gb.data})}
 if(op==='get_template'){const slug=String(first(body?.slug,body?.game,''));if(!slug)return json({ok:false,error:'slug wajib diisi'},400);const gb=await gbRequest(`/item-offers/templates/${encodeURIComponent(slug)}`);return json({ok:true,gameboost_status:gb.status,template:gb.data?.template??gb.data?.data??gb.data})}
 if(op==='get_offer'){const id=String(first(body?.offer_id,body?.external_offer_id,''));if(!id)return json({ok:false,error:'offer_id wajib diisi'},400);const gb=await gbRequest(`/item-offers/${encodeURIComponent(id)}`);const offer=gb.data?.data??gb.data;const a=await account(admin,user);await saveOffer(admin,user,a,offer);return json({ok:true,gameboost_status:gb.status,offer})}
-if(op==='set_offer_status'){const id=String(first(body?.offer_id,body?.external_offer_id,''));const action=String(body?.action||'');if(!id)return json({ok:false,error:'offer_id wajib diisi'},400);if(!['list','unlist'].includes(action))return json({ok:false,error:'action harus list atau unlist'},400);const gb=await gbRequest(`/item-offers/${encodeURIComponent(id)}/${action}`,'POST');const offer=gb.data?.data??gb.data?.offer??gb.data;const a=await account(admin,user);if(offer?.id||offer?.external_id||offer?.title)await saveOffer(admin,user,a,offer);else await admin.from('listings').update({status:action==='list'?'active':'draft',updated_at:new Date().toISOString()}).eq('user_id',user.id).eq('external_offer_id',id);return json({ok:true,gameboost_status:gb.status,action,offer,message:gb.data?.message??null,previous_status:gb.data?.previous_status??null})}
+if(op==='set_offer_status'){
+  const id=String(first(body?.offer_id,body?.external_offer_id,''));
+  const action=String(body?.action||'');
+  if(!id)return json({ok:false,error:'offer_id wajib diisi'},400);
+  if(!['list','unlist'].includes(action))return json({ok:false,error:'action harus list atau unlist'},400);
+  let gb;
+  if(action==='list'){
+    gb=await gbRequest(`/item-offers/${encodeURIComponent(id)}/list`,'POST');
+  }else{
+    gb=await gbRequest(`/item-offers/${encodeURIComponent(id)}`,'PATCH',{status:'draft'});
+  }
+  const offer=gb.data?.data??gb.data?.offer??gb.data;
+  const a=await account(admin,user);
+  if(offer?.id||offer?.external_id||offer?.offer_id||offer?.title)await saveOffer(admin,user,a,offer);else await admin.from('listings').update({status:action==='list'?'active':'draft',updated_at:new Date().toISOString()}).eq('user_id',user.id).eq('external_offer_id',id);
+  return json({ok:true,gameboost_status:gb.status,action,offer,message:gb.data?.message??null,previous_status:gb.data?.previous_status??null})
+}
 if(op==='create_offer'){const p:any={};const allowed=['game_id','game','external_id','title','slug','description','price','stock','min_quantity','delivery_instructions','delivery_method','excluded_delivery_fields','delivery_time','image_urls','item_data'];for(const k of allowed)if(body[k]!==undefined)p[k]=body[k];if(!p.game_id&&!p.game)return json({ok:false,error:'game_id atau game wajib diisi'},400);if(!p.title)return json({ok:false,error:'title wajib diisi'},400);if(!p.description)return json({ok:false,error:'description wajib diisi'},400);const n=num(p.price);if(n===null||n<0.01)return json({ok:false,error:'price EUR harus >= 0.01'},400);p.price=Math.round(n*100)/100;p.stock=stock(p.stock);p.min_quantity=Math.max(1,Math.trunc(num(p.min_quantity)??1));if(!p.delivery_time||typeof p.delivery_time!=='object'||num(p.delivery_time.duration)===null||!['minutes','hours','days'].includes(String(p.delivery_time.unit)))return json({ok:false,error:'delivery_time wajib berisi duration dan unit minutes/hours/days'},400);p.delivery_time={duration:Math.max(1,Math.trunc(num(p.delivery_time.duration)??1)),unit:String(p.delivery_time.unit)};if(!Array.isArray(p.image_urls)||p.image_urls.length<1)return json({ok:false,error:'minimal 1 image URL wajib diisi'},400);const gb=await gbRequest('/item-offers','POST',p);const offer=gb.data?.data??gb.data;const a=await account(admin,user);await saveOffer(admin,user,a,offer);return json({ok:true,gameboost_status:gb.status,offer})}
 if(op==='update_offer'){const id=String(first(body?.offer_id,body?.external_offer_id,''));if(!id)return json({ok:false,error:'offer_id wajib diisi'},400);const allowed=['game_id','game','external_id','title','slug','description','price','stock','min_quantity','delivery_instructions','delivery_method','excluded_delivery_fields','delivery_time','image_urls','item_data'];const payload:any={};for(const k of allowed)if(body[k]!==undefined)payload[k]=body[k];if(payload.price!==undefined){const p=num(payload.price);if(p===null||p<0.01)return json({ok:false,error:'price EUR harus >= 0.01'},400);payload.price=Math.round(p*100)/100}if(payload.stock!==undefined)payload.stock=stock(payload.stock);if(payload.min_quantity!==undefined)payload.min_quantity=Math.max(1,Math.trunc(num(payload.min_quantity)??1));if(!Object.keys(payload).length)return json({ok:false,error:'Tidak ada field yang diubah'},400);const gb=await gbRequest(`/item-offers/${encodeURIComponent(id)}`,'PATCH',payload);const updated=gb.data?.data??gb.data;const a=await account(admin,user);await saveOffer(admin,user,a,updated);return json({ok:true,gameboost_status:gb.status,offer:updated})}
 return json({ok:false,error:'Unsupported operation',allowed:['health','import_offers','list_games','get_game','get_template','get_offer','set_offer_status','create_offer','update_offer']},400)
