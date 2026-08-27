@@ -5,18 +5,17 @@ if (!window.__listingStatusToolsLoaded) {
 
   const esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
 
-  // All status changes go through the Supabase GameBoost adapter.
-  // The adapter uses the documented v2 item-offer endpoints and verifies
-  // the resulting remote status before saving it locally.
+  // Status changes use a dedicated adapter so ON/OFF can use the exact
+  // GameBoost list/unlist transport independently of the general API adapter.
   const api=async body=>{
-    const {data,error}=await supabase.functions.invoke('gameboost-api',{body});
+    const {data,error}=await supabase.functions.invoke('gameboost-status',{body});
     if(error){
       let detail='';
       try{if(error.context?.json){const d=await error.context.json();detail=d?.error||d?.message||(d?.gameboost_response?JSON.stringify(d.gameboost_response):'');}}catch{}
-      throw new Error(detail||error.message||'GameBoost API error');
+      throw new Error(detail||error.message||'GameBoost status API error');
     }
     if(!data?.ok){
-      const e=new Error(data?.error||'GameBoost API error');
+      const e=new Error(data?.error||'GameBoost status API error');
       e.gameboost_status=data?.gameboost_status;
       e.remote_not_found=data?.remote_not_found;
       throw e;
@@ -82,7 +81,7 @@ if (!window.__listingStatusToolsLoaded) {
         for(const x of pending){
           try{
             if(!x.external_offer_id)throw Error('Listing tidak memiliki Offer ID GameBoost.');
-            const result=await api({operation:'set_offer_status',offer_id:x.external_offer_id,action});
+            const result=await api({operation:'set_offer_status',offer_id:x.external_offer_id,listing_id:x.id,action,title:x.title});
             const remoteStatus=String(result?.remote_status||result?.offer?.status||'').toLowerCase();
             const expected=action==='list'?['active','listed','published']:['draft','inactive','unlisted'];
             if(remoteStatus&&!expected.includes(remoteStatus))throw Error(`Status GameBoost tidak sesuai setelah perubahan: ${remoteStatus}`);
