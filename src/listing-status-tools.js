@@ -5,19 +5,22 @@ if (!window.__listingStatusToolsLoaded) {
 
   const esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
 
-  // Status changes use a dedicated adapter so ON/OFF can use the exact
-  // GameBoost list/unlist transport independently of the general API adapter.
+  // ON/OFF MUST use the same canonical GameBoost adapter as the rest of the
+  // marketplace. Do not call the legacy gameboost-status function here.
+  // gameboost-api v17 owns ID resolution, POST /list, POST /unlist and
+  // post-change verification.
   const api=async body=>{
-    const {data,error}=await supabase.functions.invoke('gameboost-status',{body});
+    const {data,error}=await supabase.functions.invoke('gameboost-api',{body});
     if(error){
       let detail='';
       try{if(error.context?.json){const d=await error.context.json();detail=d?.error||d?.message||(d?.gameboost_response?JSON.stringify(d.gameboost_response):'');}}catch{}
-      throw new Error(detail||error.message||'GameBoost status API error');
+      throw new Error(detail||error.message||'GameBoost API error');
     }
     if(!data?.ok){
-      const e=new Error(data?.error||'GameBoost status API error');
+      const e=new Error(data?.error||'GameBoost API error');
       e.gameboost_status=data?.gameboost_status;
       e.remote_not_found=data?.remote_not_found;
+      e.gameboost_response=data?.gameboost_response;
       throw e;
     }
     return data;
@@ -46,7 +49,7 @@ if (!window.__listingStatusToolsLoaded) {
     style();
     const w=document.createElement('div');
     w.className='lst-modal';
-    w.innerHTML='<div class="lst-card"><div class="panel-head"><strong>ON / OFF Listings</strong><button class="action" data-close>Tutup</button></div><p>Pilih listing yang ingin diubah. Status dikirim melalui GameBoost adapter dan diverifikasi kembali dari GameBoost.</p><div class="lst-actions" style="justify-content:space-between"><span data-count>Memuat...</span><span><button class="action" data-all>Pilih semua</button><button class="action" data-none>Batal pilih</button></span></div><div class="lst-list" data-list><div class="empty">Loading...</div></div><div class="lst-actions"><select class="status-select" data-action><option value="list">ON — Listed / aktif</option><option value="unlist">OFF — Unlisted / nonaktif</option></select><button class="action" data-close>Batal</button><button class="action primary" data-apply>Terapkan</button></div><div class="lst-msg" data-msg></div></div>';
+    w.innerHTML='<div class="lst-card"><div class="panel-head"><strong>ON / OFF Listings</strong><button class="action" data-close>Tutup</button></div><p>Pilih listing yang ingin diubah. Status dikirim melalui GameBoost API dan diverifikasi kembali dari GameBoost.</p><div class="lst-actions" style="justify-content:space-between"><span data-count>Memuat...</span><span><button class="action" data-all>Pilih semua</button><button class="action" data-none>Batal pilih</button></span></div><div class="lst-list" data-list><div class="empty">Loading...</div></div><div class="lst-actions"><select class="status-select" data-action><option value="list">ON — Listed / aktif</option><option value="unlist">OFF — Unlisted / nonaktif</option></select><button class="action" data-close>Batal</button><button class="action primary" data-apply>Terapkan</button></div><div class="lst-msg" data-msg></div></div>';
     document.body.appendChild(w);
     w.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>w.remove());
 
@@ -59,22 +62,26 @@ if (!window.__listingStatusToolsLoaded) {
       const selected=new Set(pre.map(String));
       if(!items.length){list.innerHTML='<div class="empty">Tidak ada listing.</div>';count.textContent='0 listing';return;}
 
-      list.innerHTML=items.map(x=>{const missing=isMissing(x);return `<label class="lst-item"><input type="checkbox" data-id="${esc(x.id)}"${selected.has(String(x.id))?' checked':''}><span><strong>${esc(x.title||'Untitled')}</strong><small>Offer ID: ${esc(x.external_offer_id||'-')} · Stock ${Number(x.stock||0)} · ${esc(x.price??'-')} ${esc(x.currency||'')}${missing?' · Tidak ditemukan di GameBoost':''}</small></span><span class="lst-badge ${missing?'missing':(isOn(x)?'':'off')}">${badge(x)}</span></label>`}).join('');
+      list.innerHTML=items.map(x=>{
+        const missing=isMissing(x);
+        const disabled=missing?' disabled':'';
+        return `<label class="lst-item"><input type="checkbox" data-id="${esc(x.id)}"${selected.has(String(x.id))?' checked':''}${disabled}><span><strong>${esc(x.title||'Untitled')}</strong><small>Offer ID: ${esc(x.external_offer_id||'-')} · Stock ${Number(x.stock||0)} · ${esc(x.price??'-')} ${esc(x.currency||'')}${missing?' · Tidak ditemukan di GameBoost':''}</small></span><span class="lst-badge ${missing?'missing':(isOn(x)?'':'off')}">${badge(x)}</span></label>`
+      }).join('');
 
       const update=()=>count.textContent=`${list.querySelectorAll('[data-id]:checked').length} dipilih dari ${items.length}`;
       list.addEventListener('change',update);update();
-      w.querySelector('[data-all]').onclick=()=>{list.querySelectorAll('[data-id]').forEach(x=>x.checked=true);update();};
+      w.querySelector('[data-all]').onclick=()=>{list.querySelectorAll('[data-id]:not(:disabled)').forEach(x=>x.checked=true);update();};
       w.querySelector('[data-none]').onclick=()=>{list.querySelectorAll('[data-id]').forEach(x=>x.checked=false);update();};
 
       w.querySelector('[data-apply]').onclick=async()=>{
-        const ids=[...list.querySelectorAll('[data-id]:checked')].map(x=>x.dataset.id);
+        const ids=[...list.querySelectorAll('[data-id]:checked:not(:disabled)')].map(x=>x.dataset.id);
         const action=w.querySelector('[data-action]').value;
         const b=w.querySelector('[data-apply]');
-        if(!ids.length){msg.className='lst-msg err';msg.textContent='Pilih minimal 1 listing.';return;}
+        if(!ids.length){msg.className='lst-msg err';msg.textContent='Pilih minimal 1 listing yang valid.';return;}
         const targets=ids.map(id=>items.find(r=>String(r.id)===String(id))).filter(Boolean);
         const pending=targets.filter(x=>action==='list'?!isOn(x):isOn(x));
         const already=targets.length-pending.length;
-        if(!pending.length){msg.className='lst-msg ok';msg.textContent=`Semua ${targets.length} listing sudah ${action==='list'?'ON':'OFF'} atau MISSING. Tidak ada request GameBoost yang perlu dikirim.`;return;}
+        if(!pending.length){msg.className='lst-msg ok';msg.textContent=`Semua ${targets.length} listing sudah ${action==='list'?'ON':'OFF'}. Tidak ada request GameBoost yang perlu dikirim.`;return;}
         if(!confirm(`${action==='list'?'ON':'OFF'} ${pending.length} listing di GameBoost?`))return;
 
         b.disabled=true;let ok=0,fail=0;const errors=[];
@@ -88,11 +95,11 @@ if (!window.__listingStatusToolsLoaded) {
             ok++;
           }catch(e){
             fail++;
-            errors.push(e.remote_not_found?`${x.title||x.id}: Offer ${x.external_offer_id} tidak ditemukan di GameBoost. Listing ditandai MISSING.`:`${x.title||x.id}: ${e.message}`);
+            errors.push(e.remote_not_found?`${x.title||x.id}: Offer tidak ditemukan di GameBoost. Listing ditandai MISSING.`:`${x.title||x.id}: ${e.message}`);
           }
         }
         msg.className=`lst-msg ${fail?'err':'ok'}`;
-        msg.textContent=`Selesai. Berhasil: ${ok}. Sudah sesuai/MISSING: ${already}. Gagal: ${fail}.${errors.length?'\\n'+errors.join('\\n'):''}`;
+        msg.textContent=`Selesai. Berhasil: ${ok}. Sudah sesuai: ${already}. Gagal: ${fail}.${errors.length?'\\n'+errors.join('\\n'):''}`;
         b.disabled=false;
         if(ok||fail)document.querySelector('[data-sync]')?.click();
       };
