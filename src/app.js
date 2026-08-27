@@ -1,1 +1,1 @@
-/* recovery pending */
+/* recovery */
