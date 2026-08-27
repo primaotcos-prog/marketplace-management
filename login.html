@@ -12,32 +12,61 @@
       <div class="brand"><div class="brand-mark">M</div><div><strong>Marketplace</strong><span>Management</span></div></div>
       <h1>Sign in</h1>
       <p class="auth-subtitle">Login untuk mengelola GameBoost.</p>
-      <form id="login-form">
-        <label>Email<input id="email" name="email" type="email" autocomplete="email" required /></label>
+      <form id="login-form" novalidate>
+        <label>Email<input id="email" name="email" type="email" autocomplete="username" required /></label>
         <label>Password<input id="password" name="password" type="password" autocomplete="current-password" required /></label>
-        <button class="action primary" type="submit">Login</button>
-        <p id="message" class="auth-message"></p>
+        <button id="login-button" class="action primary" type="submit">Login</button>
+        <p id="message" class="auth-message" role="alert"></p>
       </form>
     </section>
   </main>
   <script type="module">
     import { supabase } from './src/supabase.js';
-    const form=document.getElementById('login-form');
-    const emailInput=document.getElementById('email');
-    const passwordInput=document.getElementById('password');
-    const msg=document.getElementById('message');
-    const {data}=await supabase.auth.getSession();
-    if(data.session) location.href='./';
-    form.addEventListener('submit',async(e)=>{
-      e.preventDefault();
-      const email=emailInput.value.trim();
-      const password=passwordInput.value;
-      if(!email||!password){msg.textContent='Email dan password wajib diisi.';return}
-      msg.textContent='Memproses...';
-      const {error}=await supabase.auth.signInWithPassword({email,password});
-      if(error){msg.textContent=error.message;return}
-      location.href='./';
-    });
+
+    const form = document.getElementById('login-form');
+    const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
+    const button = document.getElementById('login-button');
+    const msg = document.getElementById('message');
+
+    if (!supabase) {
+      msg.textContent = 'Konfigurasi Supabase tidak tersedia.';
+      button.disabled = true;
+    } else {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session) window.location.replace('/?auth=1');
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const email = emailInput.value.trim();
+        const password = passwordInput.value;
+
+        if (!email || !password) {
+          msg.textContent = 'Email dan password wajib diisi.';
+          return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'Memproses...';
+        msg.textContent = '';
+
+        try {
+          const { error } = await supabase.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError) throw sessionError;
+          if (!sessionData?.session) throw new Error('Login berhasil tetapi session belum tersimpan. Silakan coba lagi.');
+
+          msg.textContent = 'Login berhasil. Membuka dashboard...';
+          window.location.replace('/?auth=1');
+        } catch (error) {
+          msg.textContent = error?.message || 'Login gagal. Periksa email dan password.';
+          button.disabled = false;
+          button.textContent = 'Login';
+        }
+      });
+    }
   </script>
 </body>
 </html>
