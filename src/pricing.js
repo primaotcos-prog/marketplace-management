@@ -1,12 +1,93 @@
-import { supabase } from './supabase.js';
-const esc=v=>String(v??'').replace(/[&<>'\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[c]));
-const api=async body=>{const {data,error}=await supabase.functions.invoke('competitive-pricing',{body});if(error)throw error;if(!data?.ok)throw new Error(data?.error||'Competitive pricing error');return data};
-function styles(){if(document.getElementById('pricing-page-styles'))return;const s=document.createElement('style');s.id='pricing-page-styles';s.textContent='.pricing-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px}.pricing-list{display:grid;gap:8px}.pricing-row{border:1px solid var(--border);border-radius:10px;padding:11px;background:#0c1118}.pricing-row-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.pricing-row-title{font-weight:800;color:var(--text);font-size:12px}.pricing-row-sub{font-size:10px;color:var(--muted);margin-top:3px}.pricing-price{font-size:14px;font-weight:800;color:var(--text)}.pricing-form{display:grid;gap:9px}.pricing-form label{display:grid;gap:5px;font-size:10px;color:var(--muted)}.pricing-form input,.pricing-form select{height:36px;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;background:#090e15;color:var(--text);padding:0 9px}.pricing-switch{display:flex!important;align-items:center;gap:8px!important}.pricing-switch input{width:16px;height:16px}.pricing-history{margin-top:12px}.pricing-history table,.pricing-preview table{width:100%;border-collapse:collapse;font-size:10px}.pricing-history th,.pricing-history td,.pricing-preview th,.pricing-preview td{border-bottom:1px solid var(--border);padding:7px;text-align:left}.pricing-note{font-size:10px;color:var(--muted);line-height:1.45}.pricing-msg{font-size:10px;white-space:pre-wrap}.pricing-ok{color:var(--success)}.pricing-err{color:#ffaaaa}.pricing-preview{margin-top:10px;border:1px solid var(--border);border-radius:9px;padding:10px;font-size:10px}.pricing-empty{padding:12px;color:var(--muted);font-size:10px}@media(max-width:900px){.pricing-grid{grid-template-columns:1fr}}';document.head.appendChild(s)}
-let listings=[];
-async function load(){const r=await supabase.from('listings').select('id,title,external_offer_id,price,currency,stock,status,metadata').order('created_at',{ascending:false});if(r.error)throw r.error;listings=r.data||[];const rr=await supabase.from('pricing_rules').select('*');if(rr.error)throw rr.error;const rules=new Map((rr.data||[]).map(x=>[x.listing_id,x]));render(rules)}
-function render(rules){const box=document.getElementById('pricing-root');if(!box)return;box.innerHTML=`<div class="pricing-grid"><div><div class="panel"><div class="panel-head"><div><strong>Competitive Auto Pricing</strong><div class="form-subtitle">Atur undercut, batas minimum, maximum auto-cut dan auto-follow-up per listing.</div></div><button class="action" id="pricing-scan" type="button">Preview competitor</button></div><div class="pricing-list">${listings.map(x=>{const r=rules.get(x.id),on=r?.enabled?'ON':'OFF';return `<div class="pricing-row"><div class="pricing-row-head"><div><div class="pricing-row-title">${esc(x.title)}</div><div class="pricing-row-sub">Offer ${esc(x.external_offer_id||'-')} · Auto pricing ${on}</div></div><div class="pricing-price">€${Number(x.price||0).toFixed(2)}</div></div><div style="margin-top:8px;display:flex;gap:7px"><button class="action" type="button" data-config="${esc(x.id)}">Configure</button><button class="action" type="button" data-history="${esc(x.id)}">History</button></div></div>`}).join('')||'<div class="empty">Belum ada listing.</div>'}</div><div id="pricing-preview"></div></div><div id="pricing-editor"><div class="pricing-empty">Pilih <b>Configure</b> pada listing untuk mengatur pricing.</div></div></div>`;box.querySelectorAll('button[data-config]').forEach(b=>b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();configure(String(b.dataset.config||''),rules.get(String(b.dataset.config||'')))}));box.querySelectorAll('button[data-history]').forEach(b=>b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();history(String(b.dataset.history||''))}));const scan=document.getElementById('pricing-scan');if(scan)scan.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();scanPreview()})}
-function configure(id,r){const selected=listings.find(x=>String(x.id)===String(id));if(!selected){alert('Listing tidak ditemukan. Silakan refresh halaman Pricing.');return}const x=r||{enabled:false,undercut_eur:.10,min_price_eur:null,max_cut_eur:null,follow_up_enabled:false,follow_up_raise_eur:0,follow_up_max_price_eur:null,interval_minutes:15};const box=document.getElementById('pricing-editor');if(!box)return;box.innerHTML=`<div class="panel"><div class="panel-head"><strong>Pricing Rule</strong><span>€${Number(selected.price||0).toFixed(2)}</span></div><form class="pricing-form" id="pricing-form"><label class="pricing-switch"><input type="checkbox" name="enabled" ${x.enabled?'checked':''}> Enable auto-cut</label><label>Undercut (EUR)<input name="undercut_eur" type="number" min="0.01" step="0.01" value="${Number(x.undercut_eur??.10)}"></label><label>Minimum price (EUR)<input name="min_price_eur" type="number" min="0.01" step="0.01" value="${x.min_price_eur??''}" placeholder="No minimum"></label><label>Maximum total auto-cut (EUR)<input name="max_cut_eur" type="number" min="0.01" step="0.01" value="${x.max_cut_eur??''}" placeholder="No cap"></label><hr><label class="pricing-switch"><input type="checkbox" name="follow_up_enabled" ${x.follow_up_enabled?'checked':''}> Enable auto-follow-up</label><label>Follow-up raise (EUR)<input name="follow_up_raise_eur" type="number" min="0" step="0.01" value="${Number(x.follow_up_raise_eur??0)}"></label><label>Follow-up maximum price (EUR)<input name="follow_up_max_price_eur" type="number" min="0.01" step="0.01" value="${x.follow_up_max_price_eur??''}" placeholder="Optional"></label><label>Check interval (minutes)<select name="interval_minutes">${[5,10,15,30,60].map(v=>`<option value="${v}" ${Number(x.interval_minutes)===v?'selected':''}>${v} minutes</option>`).join('')}</select></label><button class="action primary" type="submit">Save pricing rule</button><div class="pricing-note">Auto-follow-up hanya menaikkan harga setelah kompetitor termurah naik, dan tidak melewati harga maksimum yang kamu tentukan.</div><div class="pricing-msg" id="pricing-msg"></div></form></div>`;const form=document.getElementById('pricing-form');if(!form)return;form.addEventListener('submit',async e=>{e.preventDefault();e.stopPropagation();const f=new FormData(form),payload={listing_id:id,enabled:f.get('enabled')==='on',undercut_eur:Number(f.get('undercut_eur')),min_price_eur:f.get('min_price_eur')?Number(f.get('min_price_eur')):null,max_cut_eur:f.get('max_cut_eur')?Number(f.get('max_cut_eur')):null,follow_up_enabled:f.get('follow_up_enabled')==='on',follow_up_raise_eur:Number(f.get('follow_up_raise_eur')||0),follow_up_max_price_eur:f.get('follow_up_max_price_eur')?Number(f.get('follow_up_max_price_eur')):null,interval_minutes:Number(f.get('interval_minutes'))};const msg=document.getElementById('pricing-msg');try{await api({operation:'save_rule',...payload});if(msg){msg.className='pricing-msg pricing-ok';msg.textContent='Pricing rule tersimpan.'}}catch(err){if(msg){msg.className='pricing-msg pricing-err';msg.textContent=err?.message||String(err)}}})}
-async function scanPreview(){const box=document.getElementById('pricing-preview');if(!box)return;box.innerHTML='<div class="pricing-preview">Memeriksa harga kompetitor… <b>tidak ada harga yang diubah</b></div>';try{const r=await api({operation:'preview'});const rows=r.previews||[];box.innerHTML=`<div class="pricing-preview"><strong>Competitor Preview — READ ONLY</strong><div class="pricing-note">Mode preview tidak mengubah harga GameBoost.</div><table><thead><tr><th>Listing</th><th>Kita</th><th>Kompetitor</th><th>Target</th><th>Action</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.title||x.offer_id)}</td><td>€${Number(x.our_price_eur||0).toFixed(2)}</td><td>${x.competitor_price_eur==null?'-':'€'+Number(x.competitor_price_eur).toFixed(2)}</td><td>€${Number(x.target_price_eur||0).toFixed(2)}</td><td>${esc(x.action||x.error||'no_change')}</td></tr>`).join('')||'<tr><td colspan="5">Tidak ada pricing rule aktif.</td></tr>'}</tbody></table></div>`}catch(e){box.innerHTML=`<div class="pricing-preview pricing-err">Preview gagal: ${esc(e?.message||String(e))}</div>`}}
-async function history(id){const r=await supabase.from('pricing_history').select('*').eq('listing_id',id).order('created_at',{ascending:false}).limit(100);if(r.error)return alert(r.error.message);const x=listings.find(v=>String(v.id)===String(id)),w=document.createElement('div');w.className='listing-tools-modal';w.innerHTML=`<div class="listing-tools-card"><div class="panel-head"><strong>Pricing History</strong><button class="action" type="button" data-close>Close</button></div><div class="pricing-note">${esc(x?.title||'Listing')}</div><div class="pricing-history"><table><thead><tr><th>Time</th><th>Old</th><th>Competitor</th><th>New</th><th>Action</th></tr></thead><tbody>${(r.data||[]).map(h=>`<tr><td>${esc(new Date(h.created_at).toLocaleString())}</td><td>€${Number(h.old_price_eur||0).toFixed(2)}</td><td>${h.competitor_price_eur==null?'-':'€'+Number(h.competitor_price_eur).toFixed(2)}</td><td>${h.new_price_eur==null?'-':'€'+Number(h.new_price_eur).toFixed(2)}</td><td>${esc(h.action)}<br><small>${esc(h.reason||'')}</small></td></tr>`).join('')||'<tr><td colspan="5">Belum ada histori.</td></tr>'}</tbody></table></div></div>`;document.body.appendChild(w);w.querySelector('[data-close]').onclick=()=>w.remove()}
-function mount(){styles();const pc=document.getElementById('page-content');if(!pc)return;pc.innerHTML='<div id="pricing-root"></div>';load().catch(e=>{const root=document.getElementById('pricing-root');if(root)root.innerHTML=`<div class="empty">Gagal memuat pricing: ${esc(e?.message||String(e))}</div>`})}
-document.addEventListener('click',e=>{const n=e.target.closest('[data-page="pricing"]');if(!n)return;e.preventDefault();e.stopImmediatePropagation();document.querySelectorAll('[data-page]').forEach(x=>x.classList.toggle('active',x===n));const t=document.getElementById('page-title');if(t)t.textContent='Pricing';mount()},true);
+// pricing.js
+// Competitive pricing UI + client-side preview. Server-side calculations live in
+// Supabase Edge Function `competitive-pricing`.
+import { supabase } from "./supabase.js";
+
+const fnName = "competitive-pricing";
+const eur = (v) => Number.isFinite(Number(v)) ? `€${Number(v).toFixed(2).replace(".", ",")}` : "—";
+const n = (v) => {
+  if (v === null || v === undefined || v === "") return null;
+  const x = Number(String(v).replace(/[^0-9,.-]/g, "").replace(",", "."));
+  return Number.isFinite(x) ? x : null;
+};
+
+async function invoke(action, payload = {}) {
+  const { data: { session } = {} } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+  const { data, error } = await supabase.functions.invoke(fnName, {
+    body: { action, ...payload },
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+function row(listing, result) {
+  const current = n(listing?.price) ?? n(listing?.metadata?.price_eur?.value);
+  const cp = n(result?.competitor_price_eur);
+  const target = n(result?.target);
+  return `<div class="pricing-preview-row">
+    <div><b>${escapeHtml(listing?.title || "Listing")}</b></div>
+    <div>${eur(current)}</div>
+    <div>${eur(cp)}</div>
+    <div>${eur(target)}</div>
+    <div>${escapeHtml(result?.action || "no_change")}</div>
+  </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
+}
+
+export async function loadCompetitivePreview(listing, rule = {}) {
+  try {
+    const data = await invoke("preview", { listing_id: listing.id, rule });
+    return data;
+  } catch (e) {
+    console.error("competitive preview", e);
+    return { status: "error", error: e.message || String(e), competitors: [] };
+  }
+}
+
+export async function savePricingRule(listing, form) {
+  const payload = {
+    listing_id: listing.id,
+    enabled: !!form.enabled,
+    undercut_eur: n(form.undercut_eur) ?? 0.10,
+    min_price_eur: n(form.min_price_eur),
+    max_cut_eur: n(form.max_cut_eur),
+    follow_up_enabled: !!form.follow_up_enabled,
+    follow_up_raise_eur: n(form.follow_up_raise_eur) ?? 0,
+    follow_up_max_price_eur: n(form.follow_up_max_price_eur),
+    interval_minutes: Number(form.interval_minutes || 15),
+  };
+  return invoke("save_rule", payload);
+}
+
+export async function getPricingHistory(listingId) {
+  return invoke("history", { listing_id: listingId });
+}
+
+export function renderCompetitorPreview(container, listing, result) {
+  if (!container) return;
+  if (!result || result.status === "error") {
+    container.innerHTML = `<div class="pricing-empty">${escapeHtml(result?.error || "Gagal mengambil harga kompetitor.")}</div>`;
+    return;
+  }
+  const cp = n(result.competitor_price_eur);
+  const competitors = Array.isArray(result.competitors) ? result.competitors : [];
+  const source = result.source || "GameBoost public marketplace";
+  container.innerHTML = `
+    <div class="pricing-preview-head">
+      <b>Competitor Preview — READ ONLY</b>
+      <small>Mode preview tidak mengubah harga GameBoost.</small>
+    </div>
+    <div class="pricing-preview-table">
+      <div class="pricing-preview-row pricing-preview-header"><span>Listing</span><span>Kita</span><span>Kompetitor</span><span>Target</span><span>Action</span></div>
+      ${row(listing, { ...result, target: result.target ?? listing.price, action: result.action ?? "no_change" })}
+    </div>
+    <div class="pricing-source">${cp == null ? "Kompetitor lain tidak ditemukan." : `Harga kompetitor terendah: <b>${eur(cp)}</b>`} · ${escapeHtml(source)}</div>
+    ${competitors.length ? `<details><summary>${competitors.length} kompetitor terdeteksi</summary><div class="pricing-competitors">${competitors.map(c => `<div>${eur(n(c.price_eur))}${c.competitor_offer_id ? ` · offer ${escapeHtml(c.competitor_offer_id)}` : ""}</div>`).join("")}</div></details>` : ""}
+  `;
+}
