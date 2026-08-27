@@ -1,1 +1,1 @@
-/* recovery */
+/* recovery from pre-pricing state required */
