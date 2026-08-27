@@ -1,1 +1,1 @@
-/* original application file is being recovered from Git history */
+/* recovery pending */
