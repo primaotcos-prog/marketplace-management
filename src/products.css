@@ -1,0 +1,14 @@
+/* Products page: compact, readable cards instead of unstyled stacked text. */
+.products-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.products-count{color:var(--muted);font-size:12px}
+.products-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding-top:4px}
+.products-list .list-row{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0;padding:14px 15px;border:1px solid var(--border);border-radius:12px;background:linear-gradient(180deg,#121925,#0f151e);box-shadow:0 6px 18px rgba(0,0,0,.12)}
+.products-list .list-row:hover{border-color:#344157;background:#151d29;transform:translateY(-1px)}
+.products-list .list-row>div{min-width:0;flex:1}
+.products-list .list-row strong{display:block;color:var(--text);font-size:13px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.products-list .list-row small{display:block;margin-top:5px;color:var(--muted);font-size:11px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.products-list .list-row .status{flex:none;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap}
+.products-list .list-row .status.ok{background:#12352c;color:#61e4bb}
+.products-list .list-row .status.off{background:#242936;color:#a6afbd}
+.products-list-empty{padding:36px 16px;text-align:center;color:var(--muted)}
+@media(max-width:640px){.products-list{grid-template-columns:1fr}.products-list .list-row{padding:12px}.products-list .list-row strong{white-space:normal}}
