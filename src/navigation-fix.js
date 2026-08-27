@@ -1,17 +1,28 @@
-// Navigation guard: Listings must never be routed to Orders.
+// Navigation state fix: keep the visible active indicator synchronized with the page.
 if (!window.__marketplaceNavigationFixLoaded) {
   window.__marketplaceNavigationFixLoaded = true;
-  const navigateListings = () => {
-    const nav = document.querySelector('.nav-item[data-page="listings"]');
-    if (!nav) return;
-    nav.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-  };
+
+  function setActivePage(page) {
+    if (!page) return;
+    document.querySelectorAll('.nav-item[data-page]').forEach(nav => {
+      nav.classList.toggle('active', nav.dataset.page === page);
+    });
+  }
+
+  // app.js emits this after every render.
+  document.addEventListener('page-rendered', event => {
+    setActivePage(event.detail?.page);
+  });
+
+  // Keep the state correct immediately on navigation as well.
   document.addEventListener('click', event => {
     const nav = event.target.closest('.nav-item[data-page]');
-    if (!nav || nav.dataset.page !== 'listings') return;
-    setTimeout(() => {
-      const pageTitle = document.getElementById('page-title');
-      if (pageTitle && pageTitle.textContent.trim().toLowerCase() === 'orders') navigateListings();
-    }, 0);
+    if (!nav) return;
+    setActivePage(nav.dataset.page);
+    // On touch devices the tapped item can retain focus after navigation.
+    setTimeout(() => nav.blur(), 0);
   }, true);
+
+  // Initial page.
+  setActivePage(document.querySelector('.nav-item.active[data-page]')?.dataset.page || 'dashboard');
 }
