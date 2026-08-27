@@ -1,0 +1,36 @@
+/* Listings UI: visual-only layer. Existing JS, API actions and DOM behavior remain intact. */
+#listings-list{padding-top:2px}
+.panel:has(#listings-list){background:linear-gradient(180deg,#101722,#0d141e);border-color:#273243;border-radius:14px;overflow:hidden}
+.panel:has(#listings-list)>.panel-head{padding:16px 18px;border-bottom:1px solid #273243;margin:0}
+.panel:has(#listings-list)>.panel-head>strong{font-size:15px;letter-spacing:-.01em}
+.panel:has(#listings-list)>.panel-head-actions{gap:7px}
+.panel:has(#listings-list) .listing-tools{gap:7px}
+.panel:has(#listings-list) .action{min-height:38px;border-radius:9px}
+.panel:has(#listings-list) .listing-search-toolbar{padding:12px 18px;border-bottom:1px solid #273243;background:#0d141e;margin:0;gap:8px}
+.panel:has(#listings-list) .listing-search-input,.panel:has(#listings-list) .listing-filter{height:40px;background:#080e15;border-color:#293548}
+.panel:has(#listings-list) .listing-search-count{font-size:10px}
+.panel:has(#listings-list) .table-wrap{padding:0 18px 12px}
+.panel:has(#listings-list) .table-wrap table{border-collapse:separate;border-spacing:0 7px;font-size:11px}
+.panel:has(#listings-list) .table-wrap thead th{padding:10px 12px;border:0;color:#7f8b9d;font-size:9px;text-transform:uppercase;letter-spacing:.08em;background:transparent}
+.panel:has(#listings-list) .table-wrap tbody tr{background:#0b1119;box-shadow:0 0 0 1px #202a38;border-radius:10px}
+.panel:has(#listings-list) .table-wrap tbody td{padding:11px 12px;border-bottom:0;color:#cbd3df;vertical-align:middle}
+.panel:has(#listings-list) .table-wrap tbody td:first-child{border-radius:10px 0 0 10px}
+.panel:has(#listings-list) .table-wrap tbody td:last-child{border-radius:0 10px 10px 0}
+.panel:has(#listings-list) .table-wrap tbody tr:hover{background:#101925;box-shadow:0 0 0 1px #344157,0 6px 20px rgba(0,0,0,.14)}
+.panel:has(#listings-list) .table-wrap tbody strong{color:#edf2f8;font-size:11px}
+.panel:has(#listings-list) .table-wrap tbody small{color:#7f8b9d;font-size:9px}
+.panel:has(#listings-list) .status-pill{padding:4px 8px;font-size:9px}
+.panel:has(#listings-list) .toggle-button{min-width:54px;padding:5px 9px;font-size:10px}
+#listing-detail{margin-top:14px}
+#listing-detail>.panel,#listing-detail>.detail-panel{background:linear-gradient(180deg,#101722,#0d141e);border:1px solid #273243;border-radius:14px;overflow:hidden;padding:0}
+#listing-detail .panel-head{padding:15px 18px;border-bottom:1px solid #273243;background:#101822}
+#listing-detail .panel-head strong{font-size:14px}
+#listing-detail .panel-body{padding:0 18px 18px}
+#listing-detail .status-row{padding:11px 0;border-bottom:1px solid #202a38}
+#listing-detail .offer-image{width:64px;height:64px;border-radius:10px;margin:16px 18px 4px}
+#listing-detail .description-block{margin:14px 18px}
+#listing-detail .detail-panel{margin-top:0}
+#listing-detail .panel:has([data-offer-form]){margin:0!important;border:0;border-top:1px solid #273243;border-radius:0;background:#101722;padding:18px}
+.offer-edit-card{border-radius:14px}
+@media(max-width:900px){.panel:has(#listings-list)>.panel-head{align-items:flex-start}.panel:has(#listings-list)>.panel-head-actions{width:100%;justify-content:flex-start}.panel:has(#listings-list) .listing-search-toolbar{grid-template-columns:minmax(0,1fr) 150px}.panel:has(#listings-list) .listing-search-count{grid-column:1/-1;text-align:left}.panel:has(#listings-list) .table-wrap{padding:0 12px 10px}}
+@media(max-width:640px){.panel:has(#listings-list)>.panel-head{padding:13px 14px}.panel:has(#listings-list)>.panel-head-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.panel:has(#listings-list)>.panel-head-actions .action{width:100%}.panel:has(#listings-list) .listing-search-toolbar{padding:10px 14px;grid-template-columns:1fr}.panel:has(#listings-list) .listing-search-count{grid-column:auto}.panel:has(#listings-list) .table-wrap{padding:0 8px 8px;overflow-x:auto}.panel:has(#listings-list) .table-wrap table{min-width:650px}.panel:has(#listings-list) .table-wrap tbody td{padding:10px}.panel:has(#listings-list) .table-wrap tbody tr{box-shadow:0 0 0 1px #202a38}.panel:has(#listings-list) .listing-tools{display:contents}.panel:has(#listings-list) .listing-tools .action{min-height:38px}#listing-detail{margin-top:10px}#listing-detail>.panel,#listing-detail>.detail-panel{border-radius:12px}#listing-detail .panel-head{padding:13px 14px}#listing-detail .panel-body{padding:0 14px 14px}#listing-detail .status-row{font-size:11px}#listing-detail .offer-image{margin-left:14px}}
