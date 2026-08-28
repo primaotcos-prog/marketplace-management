@@ -1,10 +1,30 @@
-/* Listings responsive fix: keep every card/action fully visible on narrow content areas. */
+/* Listings responsive fix: preserve the preferred two-card layout while keeping actions fully visible. */
 .panel:has(#listings-list) .table-wrap{container-type:inline-size}
-/* Two columns only when the Listings panel itself is wide enough. */
-@container (min-width:760px){
+
+/* The app reserves room for the sidebar, so two compact cards are intentional
+   on tablet/phone layouts. The card itself remains fully self-contained. */
+@container (min-width:480px){
   .panel:has(#listings-list) .table-wrap tbody{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
-/* If a browser reports a wide viewport but the actual panel is narrow, stay single-column. */
-@media(max-width:899px){
+
+/* Extra-narrow content areas fall back to one card rather than clipping. */
+@container (max-width:479px){
   .panel:has(#listings-list) .table-wrap tbody{grid-template-columns:1fr!important}
+}
+
+/* Keep the three actions inside each card and prevent Edit from being clipped. */
+.panel:has(#listings-list) .table-wrap .row-actions{
+  display:grid!important;
+  grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  gap:6px!important;
+  width:100%!important;
+}
+.panel:has(#listings-list) .table-wrap .row-actions .action{
+  width:100%!important;
+  min-width:0!important;
+  max-width:none!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+  box-sizing:border-box!important;
 }
