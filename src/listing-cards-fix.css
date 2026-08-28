@@ -1,0 +1,10 @@
+/* Listings responsive fix: keep every card/action fully visible on narrow content areas. */
+.panel:has(#listings-list) .table-wrap{container-type:inline-size}
+/* Two columns only when the Listings panel itself is wide enough. */
+@container (min-width:760px){
+  .panel:has(#listings-list) .table-wrap tbody{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+/* If a browser reports a wide viewport but the actual panel is narrow, stay single-column. */
+@media(max-width:899px){
+  .panel:has(#listings-list) .table-wrap tbody{grid-template-columns:1fr!important}
+}
