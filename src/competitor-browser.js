@@ -50,7 +50,11 @@ function installCompetitorBrowser() {
     const rows = Array.isArray(data?.listings) ? data.listings : [];
     meta.textContent = `Halaman ${data?.current_page ?? 1}/${data?.last_page ?? 1} · ${data?.total ?? rows.length} listing ditemukan · URL: ${data?.source_url || '—'}`;
     if (!rows.length) { result.innerHTML = '<div class="gbc-empty">Tidak ada listing kompetitor pada halaman ini.</div>'; return; }
-    result.innerHTML = `<table class="gbc-table"><thead><tr><th>Item</th><th>Seller</th><th>EUR</th><th>USD</th><th>Stock</th><th>Min</th><th>Delivery</th><th></th></tr></thead><tbody>${rows.map(x => `<tr><td><strong>${esc(x.title)}</strong></td><td>${esc(x.seller || '—')}</td><td class="gbc-price">${esc(x.price_format || x.price ?? '—')}</td><td>${esc(x.local_price_format || x.local_price ?? '—')}</td><td>${esc(x.stock ?? '—')}</td><td>${esc(x.min_quantity ?? '—')}</td><td>${esc(x.delivery_time?.format || x.delivery_time?.formatLong || '—')}</td><td>${x.url ? `<a class="gbc-link" href="${esc(x.url)}" target="_blank" rel="noopener">Buka</a>` : ''}</td></tr>`).join('')}</tbody></table>`;
+    const body = rows.map(x => {
+      const link = x.url ? '<a class="gbc-link" href="' + esc(x.url) + '" target="_blank" rel="noopener">Buka</a>' : '';
+      return '<tr><td><strong>' + esc(x.title) + '</strong></td><td>' + esc(x.seller || '—') + '</td><td class="gbc-price">' + esc(x.price_format ?? x.price ?? '—') + '</td><td>' + esc(x.local_price_format ?? x.local_price ?? '—') + '</td><td>' + esc(x.stock ?? '—') + '</td><td>' + esc(x.min_quantity ?? '—') + '</td><td>' + esc(x.delivery_time?.format || x.delivery_time?.formatLong || '—') + '</td><td>' + link + '</td></tr>';
+    }).join('');
+    result.innerHTML = '<table class="gbc-table"><thead><tr><th>Item</th><th>Seller</th><th>EUR</th><th>USD</th><th>Stock</th><th>Min</th><th>Delivery</th><th></th></tr></thead><tbody>' + body + '</tbody></table>';
   };
 
   const run = async () => {
