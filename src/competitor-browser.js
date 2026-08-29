@@ -1,18 +1,114 @@
 const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
 
+const normalise = value => String(value ?? '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const slugify = value => normalise(value).replace(/\s+/g, '-');
+
+function extractInertia(text) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && parsed.component && parsed.props) return parsed;
+  } catch (_) {}
+
+  try {
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    const scripts = [...doc.querySelectorAll('script[type="application/json"]')];
+    for (const script of scripts) {
+      const raw = script.textContent.trim();
+      if (!raw.includes('"component"') || !raw.includes('"props"')) continue;
+      try { return JSON.parse(raw); } catch (_) {}
+      try { return JSON.parse(JSON.parse(raw)); } catch (_) {}
+    }
+    const root = doc.querySelector('[data-page]');
+    if (root?.getAttribute('data-page')) {
+      try { return JSON.parse(root.getAttribute('data-page')); } catch (_) {}
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function fetchGameBoostBrowser({ game, search, locale = 'id', page = 1, sort = 'price' }) {
+  const gameSlug = slugify(game);
+  const query = String(search || '').trim();
+  if (!gameSlug) throw new Error('Game slug wajib diisi.');
+  if (!query) throw new Error('Nama item wajib diisi.');
+
+  const url = new URL(`https://gameboost.com/${locale}/${gameSlug}/items`);
+  url.searchParams.set('s', query);
+  url.searchParams.set('page', String(Math.max(1, Number(page) || 1)));
+  if (sort) url.searchParams.set('sort', sort);
+
+  let response;
+  try {
+    response = await fetch(url.href, {
+      method: 'GET',
+      credentials: 'include',
+      mode: 'cors',
+      headers: {
+        Accept: 'text/html, application/xhtml+xml',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-Inertia': 'true'
+      }
+    });
+  } catch (error) {
+    throw new Error('Browser tidak diizinkan membaca GameBoost dari domain dashboard (CORS). Buka GameBoost pada tab yang sama/origin atau gunakan endpoint resmi GameBoost yang mengizinkan CORS.');
+  }
+
+  const text = await response.text();
+  if (!response.ok) throw new Error(`GameBoost browser HTTP ${response.status}`);
+
+  const payload = extractInertia(text);
+  if (!payload) throw new Error(`Payload Inertia GameBoost tidak ditemukan (HTTP ${response.status}, ${text.length} bytes).`);
+
+  const items = payload?.props?.items;
+  const listings = Array.isArray(items?.data) ? items.data : [];
+  const rows = listings.map((x, index) => ({
+    no: index + 1,
+    id: x?.id ?? null,
+    title: x?.title ?? '',
+    seller: x?.seller?.username ?? x?.seller ?? null,
+    seller_id: x?.seller?.id ?? null,
+    price: x?.price?.value ?? null,
+    price_format: x?.price?.format ?? null,
+    currency: x?.price?.currency?.code ?? 'EUR',
+    local_price: x?.local_price?.value ?? null,
+    local_price_format: x?.local_price?.format ?? null,
+    local_currency: x?.local_price?.currency?.code ?? 'USD',
+    stock: x?.stock ?? null,
+    min_quantity: x?.min_quantity ?? null,
+    delivery_time: x?.delivery_time ?? null,
+    status: x?.status ?? null,
+    slug: x?.slug ?? null,
+    url: x?.slug ? `https://gameboost.com/${locale}/${gameSlug}/items/${x.slug}` : null
+  }));
+
+  return {
+    ok: true,
+    component: payload.component,
+    query: items?.query ?? query,
+    current_page: items?.current_page ?? page,
+    per_page: items?.per_page ?? rows.length,
+    total: items?.total ?? rows.length,
+    last_page: items?.last_page ?? 1,
+    next_page_url: items?.next_page_url ?? null,
+    prev_page_url: items?.prev_page_url ?? null,
+    listings: rows,
+    source_url: url.href,
+    source: 'GameBoost browser / Inertia'
+  };
+}
+
 function installCompetitorBrowser() {
   const host = document.getElementById('page-content');
   const title = document.getElementById('page-title');
   if (!host || !title || title.textContent.trim().toLowerCase() !== 'pricing') return;
   if (document.getElementById('gb-competitor-browser')) return;
-  if (!window.GameBoostCompetitors?.search) return;
 
   const box = document.createElement('div');
   box.id = 'gb-competitor-browser';
   box.className = 'gbc-card';
   box.innerHTML = `
     <div class="gbc-head">
-      <div><h2>Competitor Listings</h2><p>Ambil listing publik GameBoost melalui payload Inertia yang sama dengan halaman marketplace.</p></div>
+      <div><h2>Competitor Listings</h2><p>Membaca payload Inertia GameBoost dari sesi browser.</p></div>
       <span id="gbc-source" class="gbc-source">GameBoost /items</span>
     </div>
     <div class="gbc-toolbar">
@@ -48,11 +144,11 @@ function installCompetitorBrowser() {
 
   const render = data => {
     const rows = Array.isArray(data?.listings) ? data.listings : [];
-    meta.textContent = `Halaman ${data?.current_page ?? 1}/${data?.last_page ?? 1} · ${data?.total ?? rows.length} listing ditemukan · URL: ${data?.source_url || '—'}`;
+    meta.textContent = `Halaman ${data?.current_page ?? 1}/${data?.last_page ?? 1} · ${data?.total ?? rows.length} listing ditemukan · Browser → GameBoost`;
     if (!rows.length) { result.innerHTML = '<div class="gbc-empty">Tidak ada listing kompetitor pada halaman ini.</div>'; return; }
     const body = rows.map(x => {
       const link = x.url ? '<a class="gbc-link" href="' + esc(x.url) + '" target="_blank" rel="noopener">Buka</a>' : '';
-      return '<tr><td><strong>' + esc(x.title) + '</strong></td><td>' + esc(x.seller || '—') + '</td><td class="gbc-price">' + esc(x.price_format ?? x.price ?? '—') + '</td><td>' + esc(x.local_price_format ?? x.local_price ?? '—') + '</td><td>' + esc(x.stock ?? '—') + '</td><td>' + esc(x.min_quantity ?? '—') + '</td><td>' + esc(x.delivery_time?.format || x.delivery_time?.formatLong || '—') + '</td><td>' + link + '</td></tr>';
+      return '<tr><td><strong>' + esc(x.title) + '</strong></td><td>' + esc(x.seller || '—') + '</td><td class="gbc-price">' + esc(x.price_format ?? x.price ?? '—') + '</td><td>' + esc(x.local_price_format ?? x.local_price ?? '—') + '</td><td>' + esc(x.stock ?? '—') + '</td><td>' + esc(x.min_quantity ?? '—') + '</td><td>' + esc(x.delivery_time?.format || x.delivery_time?.formatLong || x.delivery_time || '—') + '</td><td>' + link + '</td></tr>';
     }).join('');
     result.innerHTML = '<table class="gbc-table"><thead><tr><th>Item</th><th>Seller</th><th>EUR</th><th>USD</th><th>Stock</th><th>Min</th><th>Delivery</th><th></th></tr></thead><tbody>' + body + '</tbody></table>';
   };
@@ -61,8 +157,8 @@ function installCompetitorBrowser() {
     const game = gameInput.value.trim();
     const search = searchInput.value.trim();
     if (!game || !search) { result.innerHTML = '<div class="gbc-error">Game slug dan nama item wajib diisi.</div>'; return; }
-    load.disabled = true; load.textContent = 'Mengambil...'; result.innerHTML = '<div class="gbc-empty">Mengambil payload GameBoost...</div>';
-    try { render(await window.GameBoostCompetitors.search({ game, search, locale:'id', page:1, sort:sortInput.value })); }
+    load.disabled = true; load.textContent = 'Mengambil...'; result.innerHTML = '<div class="gbc-empty">Mengambil payload GameBoost dari browser...</div>';
+    try { render(await fetchGameBoostBrowser({ game, search, locale:'id', page:1, sort:sortInput.value })); }
     catch (e) { result.innerHTML = `<div class="gbc-error">Gagal mengambil kompetitor: ${esc(e?.message || e)}</div>`; }
     finally { load.disabled = false; load.textContent = 'Cari Kompetitor'; }
   };
